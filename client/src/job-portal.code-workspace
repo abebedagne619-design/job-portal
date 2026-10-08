@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "../.."
+		},
+		{
+			"path": "../../../my-portfolio"
+		},
+		{
+			"path": "../../../ml-service"
+		}
+	],
+	"settings": {}
+}

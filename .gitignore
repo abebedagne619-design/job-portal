@@ -1,0 +1,23 @@
+# IDE files (ለዋናው ፎልደር)
+.vscode/
+.idea/
+
+# OS files (ለዋናው ፎልደር)
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
+npm-debug.log*
+
+# Environment files
+.env
+.env.local
+.env.production
+# Added by ggshield
+.cache_ggshield".cache_ggshield/" 
+".cache_ggshield/" 
+.cache_ggshield/ 
+.env
+.cache_ggshield 
+.cache_ggshield 
