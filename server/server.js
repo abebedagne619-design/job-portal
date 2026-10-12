@@ -80,6 +80,44 @@ app.post('/api/recommendations/skills', async (req, res) => {
         });
     }
 });
+// ============= GET RECOMMENDATIONS (አዲስ) =============
+app.get('/api/recommendations/skills/:userId', async (req, res) => {
+    try {
+        const userId = req.params.userId;
+        
+        // 1. የተጠቃሚውን ክህሎቶች ከ user_skills table አምጣ
+        let skills = [];
+        try {
+            const [skillRows] = await promisePool.query(
+                'SELECT skill FROM user_skills WHERE user_id = ?', 
+                [userId]
+            );
+            skills = skillRows.map(row => row.skill);
+        } catch (skillErr) {
+            console.log('⚠️ user_skills table not found, using empty skills');
+        }
+        
+        console.log(`📡 GET Recommendations - User: ${userId}, Skills:`, skills);
+        
+        // 2. ወደ Python ML ላክ
+        const response = await axios.post('http://localhost:5001/recommend', {
+            userId: parseInt(userId),
+            skills: skills
+        }, {
+            timeout: 60000  // 60 ሰከንድ ጠብቅ (ML ቀርፋፋ ስለሆነ)
+        });
+        
+        res.json(response.data);
+        
+    } catch (error) {
+        console.error("❌ ML Service Error:", error.message);
+        res.status(500).json({ 
+            error: "ML service unavailable",
+            details: error.message 
+        });
+    }
+});
+
 
 // ============= DATABASE CONNECTION =============
 const pool = mysql.createPool({
@@ -273,21 +311,23 @@ app.get('/api/interviews/user/:id', async (req, res) => {
         const sql = `
             SELECT 
                 i.id, 
-                i.interview_date AS scheduled_date, -- እዚህ ጋር ስሙን ቀይረነዋል
+                i.scheduled_date, 
+                i.interview_time, 
+                i.meeting_link, 
                 i.location, 
                 i.notes, 
                 i.status, 
                 j.title AS job_title, 
-                c.name AS company -- ኩባንያው ሌላ Table ካለው JOIN አድርጊ
+                u.name AS employer_name
             FROM interviews i
             JOIN jobs j ON i.job_id = j.id
-            LEFT JOIN users c ON j.employer_id = c.id
-            WHERE i.user_id = ?
-            ORDER BY i.interview_date ASC
+            LEFT JOIN users u ON i.employer_id = u.id
+            WHERE i.applicant_id = ?
+            ORDER BY i.scheduled_date ASC
         `;
         
         const [rows] = await promisePool.query(sql, [userId]);
-        res.json(rows); // Array መላኩን ያረጋግጣል
+        res.json(rows);
     } catch (err) {
         console.error('Interview Error:', err);
         res.status(500).json({ error: "Database query failed", details: err.message });
