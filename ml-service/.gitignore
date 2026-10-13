@@ -1,0 +1,8 @@
+# በ ml-service/.gitignore ውስጥ አክል
+venv/
+__pycache__/
+*.pyc
+.env
+*.log
+.pytest_cache/
+.vscode/
