@@ -12,7 +12,7 @@ start "Backend Server" cmd /k "cd C:\xampp\htdocs\job-portal\server && npm run d
 timeout /t 3 /nobreak >nul
 
 echo [2/3] Starting ML Service (Port 5001)...
-start "ML Service" cmd /k "cd C:\xampp\htdocs\ml-service && python recommendation_service.py"
+start "ML Service" cmd /k "cd C:\xampp\htdocs\job-portal\ml-service && python recommendation_service.py"
 timeout /t 3 /nobreak >nul
 
 echo [3/3] Starting Frontend (Port 5173)...
