@@ -20,11 +20,11 @@ const PORT = process.env.PORT || 5000;
 
 // ============= 1. ሰርቨሩ በስህተት እንዳይዘጋ መከላከያ =============
 process.on('uncaughtException', (err) => {
-    console.error('❌ There was an uncaught error:', err);
+    console.error('❌ There was an uncaught error:', err);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-    console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+    console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
 // ============= 2. MIDDLEWARES (ትክክለኛ ቅደም ተከተል) =============
@@ -34,9 +34,9 @@ app.use(morgan('dev'));
 
 // CORS - የግድ ከRoutes በፊት መሆን አለበት
 app.use(cors({
-    origin: "http://localhost:5173", // አንዱን ብቻ መጠቀም ከተቻለ
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
+    origin: "http://localhost:5173", // አንዱን ብቻ መጠቀም ከተቻለ
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
 }));
 
 app.use(express.json());
@@ -45,45 +45,86 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Session & Passport
 app.use(session({
-    secret: process.env.SESSION_SECRET || 'jobportal_secret_key',
-    resave: false,
-    saveUninitialized: false,
-    cookie: { secure: false, maxAge: 24 * 60 * 60 * 1000 }
+    secret: process.env.SESSION_SECRET || 'jobportal_secret_key',
+    resave: false,
+    saveUninitialized: false,
+    cookie: { secure: false, maxAge: 24 * 60 * 60 * 1000 }
 }));
 
 app.use(passport.initialize());
 app.use(passport.session());
 app.use('/api/messages', messageRoutes); // ይሄ መስመር በላክኸው server.js ውስጥ የለም!
+
+// ============= CACHE SYSTEM (አዲስ የተጨመረ) =============
+const cache = new Map();
+const CACHE_DURATION = 5 * 60 * 1000; // 5 ደቂቃ
+
+function getCache(key) {
+    const item = cache.get(key);
+    if (!item) return null;
+    if (Date.now() > item.expiry) {
+        cache.delete(key);
+        return null;
+    }
+    return item.data;
+}
+
+function setCache(key, data) {
+    cache.set(key, {
+        data: data,
+        expiry: Date.now() + CACHE_DURATION
+    });
+}
+
+function clearCache(pattern) {
+    for (const key of cache.keys()) {
+        if (key.includes(pattern)) {
+            cache.delete(key);
+        }
+    }
+}
+
 // ከ React የሚመጣውን የክህሎት ጥያቄ ተቀብሎ ወደ Python (5001) ያስተላልፋል
 app.post('/api/recommendations/skills', async (req, res) => {
-    try {
-        // ከReact የሚመጣውን ዳታ መቀበል
-        const { user_id, skills } = req.body;
+    try {
+        // ከReact የሚመጣውን ዳታ መቀበል
+        const { user_id, skills } = req.body;
 
-        console.log(`📡 Processing recommendations for User: ${user_id}`);
+        console.log(`📡 Processing recommendations for User: ${user_id}`);
 
-        // ለ Python ML ሰርቨር (Port 5001) ጥያቄ መላክ
-        // ማሳሰቢያ፡ Python ላይ አድራሻው '/recommend' መሆኑን አረጋግጥ
-        const response = await axios.post('http://localhost:5001/recommend', {
-            userId: user_id,
-            skills: skills
-        });
-        
-        // ከፓይዘን የመጣውን ውጤት ለ React መመለስ
-        res.json(response.data);
+        // ለ Python ML ሰርቨር (Port 5001) ጥያቄ መላክ
+        // ማሳሰቢያ፡ Python ላይ አድራሻው '/recommend' መሆኑን አረጋግጥ
+        const response = await axios.post('http://localhost:5001/recommend', {
+            userId: user_id,
+            skills: skills
+        });
+        
+        // ከፓይዘን የመጣውን ውጤት ለ React መመለስ
+        res.json(response.data);
 
-    } catch (error) {
-        console.error("❌ ML Service Error:", error.message);
-        res.status(500).json({ 
-            error: "የማሽን ለርኒንግ አገልግሎቱ (Python) ምላሽ አልሰጠም",
-            details: error.message 
-        });
-    }
+    } catch (error) {
+        console.error("❌ ML Service Error:", error.message);
+        res.status(500).json({ 
+            error: "የማሽን ለርኒንግ አገልግሎቱ (Python) ምላሽ አልሰጠም",
+            details: error.message 
+        });
+    }
 });
-// ============= GET RECOMMENDATIONS (አዲስ) =============
+
+// ============= GET RECOMMENDATIONS (WITH CACHE - የተሻሻለ) =============
 app.get('/api/recommendations/skills/:userId', async (req, res) => {
     try {
         const userId = req.params.userId;
+        const cacheKey = `rec_${userId}`;
+        
+        // ✅ Cache ካለ ተጠቀም
+        const cached = getCache(cacheKey);
+        if (cached) {
+            console.log(`⚡ Cache HIT for user ${userId}`);
+            return res.json(cached);
+        }
+        
+        console.log(`🔄 Cache MISS for user ${userId} - fetching from ML`);
         
         // 1. የተጠቃሚውን ክህሎቶች ከ user_skills table አምጣ
         let skills = [];
@@ -107,6 +148,10 @@ app.get('/api/recommendations/skills/:userId', async (req, res) => {
             timeout: 60000  // 60 ሰከንድ ጠብቅ (ML ቀርፋፋ ስለሆነ)
         });
         
+        // ✅ Cache አስቀምጥ
+        setCache(cacheKey, response.data);
+        console.log(`✅ Cached ${response.data.length} recommendations for user ${userId}`);
+        
         res.json(response.data);
         
     } catch (error) {
@@ -118,124 +163,136 @@ app.get('/api/recommendations/skills/:userId', async (req, res) => {
     }
 });
 
+// ============= CLEAR CACHE (Admin - አዲስ የተጨመረ) =============
+app.post('/api/recommendations/clear-cache/:userId', async (req, res) => {
+    try {
+        const userId = req.params.userId;
+        clearCache(`rec_${userId}`);
+        console.log(`🗑️ Cache cleared for user ${userId}`);
+        res.json({ success: true, message: `Cache cleared for user ${userId}` });
+    } catch (err) {
+        console.error('Clear cache error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
 
 // ============= DATABASE CONNECTION =============
 const pool = mysql.createPool({
-    host: process.env.DB_HOST || '127.0.0.1',
-    user: process.env.DB_USER || 'root',
-    password: process.env.DB_PASSWORD || '',
-    database: process.env.DB_NAME || 'jobportal',
-    port: 3307,
-    waitForConnections: true,
-    connectionLimit: 15,
-    queueLimit: 0,
-    connectTimeout: 60000,
-    enableKeepAlive: true,
-    keepAliveInitialDelay: 10000
+    host: process.env.DB_HOST || '127.0.0.1',
+    user: process.env.DB_USER || 'root',
+    password: process.env.DB_PASSWORD || '',
+    database: process.env.DB_NAME || 'jobportal',
+    port: 3307,
+    waitForConnections: true,
+    connectionLimit: 15,
+    queueLimit: 0,
+    connectTimeout: 60000,
+    enableKeepAlive: true,
+    keepAliveInitialDelay: 10000
 });
 
 const promisePool = pool.promise();
 
 const checkConnection = async () => {
-    try {
-        await promisePool.query('SELECT 1');
-        console.log('✅ MySQL connected successfully on port 3307');
-    } catch (err) {
-        console.error('❌ MySQL connection error:', err.message);
-        console.log('🔄 Retrying database connection in 5 seconds...');
-        setTimeout(checkConnection, 5000);
-    }
+    try {
+        await promisePool.query('SELECT 1');
+        console.log('✅ MySQL connected successfully on port 3307');
+    } catch (err) {
+        console.error('❌ MySQL connection error:', err.message);
+        console.log('🔄 Retrying database connection in 5 seconds...');
+        setTimeout(checkConnection, 5000);
+    }
 };
 
 checkConnection();
 
 // ============= HELPER FUNCTIONS =============
 const generateToken = (id) => {
-    return jwt.sign({ id }, process.env.JWT_SECRET || 'jobportal_secret_key_2024', {
-        expiresIn: '30d'
-    });
+    return jwt.sign({ id }, process.env.JWT_SECRET || 'jobportal_secret_key_2024', {
+        expiresIn: '30d'
+    });
 };
 
 // ============= AUTH ROUTES =============
 
 // Register
 app.post('/api/auth/register', async (req, res) => {
-    try {
-        const { name, email, password, role, phone, location } = req.body;
-        
-        const [existing] = await promisePool.query('SELECT id FROM users WHERE email = ?', [email]);
-        if (existing.length > 0) {
-            return res.status(400).json({ success: false, message: 'User already exists' });
-        }
-        
-        const hashedPassword = await bcrypt.hash(password, 10);
-        const [result] = await promisePool.query(
-            'INSERT INTO users (name, email, password, role, phone, location) VALUES (?, ?, ?, ?, ?, ?)',
-            [name, email, hashedPassword, role || 'applicant', phone || null, location || null]
-        );
-        
-        const [users] = await promisePool.query('SELECT id, name, email, role FROM users WHERE id = ?', [result.insertId]);
-        const token = generateToken(result.insertId);
-        
-        res.status(201).json({
-            success: true,
-            data: { user: users[0], token }
-        });
-    } catch (err) {
-        console.error('Register error:', err);
-        res.status(500).json({ success: false, message: err.message });
-    }
+    try {
+        const { name, email, password, role, phone, location } = req.body;
+        
+        const [existing] = await promisePool.query('SELECT id FROM users WHERE email = ?', [email]);
+        if (existing.length > 0) {
+            return res.status(400).json({ success: false, message: 'User already exists' });
+        }
+        
+        const hashedPassword = await bcrypt.hash(password, 10);
+        const [result] = await promisePool.query(
+            'INSERT INTO users (name, email, password, role, phone, location) VALUES (?, ?, ?, ?, ?, ?)',
+            [name, email, hashedPassword, role || 'applicant', phone || null, location || null]
+        );
+        
+        const [users] = await promisePool.query('SELECT id, name, email, role FROM users WHERE id = ?', [result.insertId]);
+        const token = generateToken(result.insertId);
+        
+        res.status(201).json({
+            success: true,
+            data: { user: users[0], token }
+        });
+    } catch (err) {
+        console.error('Register error:', err);
+        res.status(500).json({ success: false, message: err.message });
+    }
 });
 
 // Login
 app.post('/api/auth/login', async (req, res) => {
-    try {
-        const { email, password } = req.body;
-        
-        const [users] = await promisePool.query('SELECT * FROM users WHERE email = ?', [email]);
-        if (users.length === 0) {
-            return res.status(401).json({ success: false, message: 'Invalid credentials' });
-        }
-        
-        const user = users[0];
-        const isMatch = await bcrypt.compare(password, user.password);
-        if (!isMatch) {
-            return res.status(401).json({ success: false, message: 'Invalid credentials' });
-        }
-        
-        const token = generateToken(user.id);
-        const { password: _, ...userWithoutPassword } = user;
-        
-        res.json({
-            success: true,
-            data: { user: userWithoutPassword, token }
-        });
-    } catch (err) {
-        console.error('Login error:', err);
-        res.status(500).json({ success: false, message: err.message });
-    }
+    try {
+        const { email, password } = req.body;
+        
+        const [users] = await promisePool.query('SELECT * FROM users WHERE email = ?', [email]);
+        if (users.length === 0) {
+            return res.status(401).json({ success: false, message: 'Invalid credentials' });
+        }
+        
+        const user = users[0];
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch) {
+            return res.status(401).json({ success: false, message: 'Invalid credentials' });
+        }
+        
+        const token = generateToken(user.id);
+        const { password: _, ...userWithoutPassword } = user;
+        
+        res.json({
+            success: true,
+            data: { user: userWithoutPassword, token }
+        });
+    } catch (err) {
+        console.error('Login error:', err);
+        res.status(500).json({ success: false, message: err.message });
+    }
 });
 
 // Get current user
 app.get('/api/auth/me', async (req, res) => {
-    const token = req.headers.authorization?.split(' ')[1];
-    
-    if (!token) {
-        return res.status(401).json({ success: false, message: 'No token provided' });
-    }
-    
-    try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'jobportal_secret_key_2024');
-        const [users] = await promisePool.query('SELECT id, name, email, role, phone, location FROM users WHERE id = ?', [decoded.id]);
-        
-        if (users.length === 0) {
-            return res.status(401).json({ success: false, message: 'User not found' });
-        }
-        
-        res.json({ success: true, data: users[0] });
-    } catch (err) {
-        res.status(401).json({ success: false, message: 'Invalid token' });
-    }
+    const token = req.headers.authorization?.split(' ')[1];
+    
+    if (!token) {
+        return res.status(401).json({ success: false, message: 'No token provided' });
+    }
+    
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'jobportal_secret_key_2024');
+        const [users] = await promisePool.query('SELECT id, name, email, role, phone, location FROM users WHERE id = ?', [decoded.id]);
+        
+        if (users.length === 0) {
+            return res.status(401).json({ success: false, message: 'User not found' });
+        }
+        
+        res.json({ success: true, data: users[0] });
+    } catch (err) {
+        res.status(401).json({ success: false, message: 'Invalid token' });
+    }
 });
 
 // ============= JOBS API (ተስተካክሎ የጸዳ) =============
@@ -283,26 +340,26 @@ app.get('/api/jobs/:id', async (req, res) => {
 
 // ============= USERS API =============
 app.get('/api/users', async (req, res) => {
-    try {
-        const [users] = await promisePool.query('SELECT id, name, email, role FROM users');
-        res.json(users);
-    } catch (err) {
-        console.error('Get users error:', err);
-        res.status(500).json({ error: err.message });
-    }
+    try {
+        const [users] = await promisePool.query('SELECT id, name, email, role FROM users');
+        res.json(users);
+    } catch (err) {
+        console.error('Get users error:', err);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 app.get('/api/users/:id', async (req, res) => {
-    try {
-        const [users] = await promisePool.query('SELECT id, name, email, role FROM users WHERE id = ?', [req.params.id]);
-        if (users.length === 0) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-        res.json(users[0]);
-    } catch (err) {
-        console.error('Get user error:', err);
-        res.status(500).json({ error: err.message });
-    }
+    try {
+        const [users] = await promisePool.query('SELECT id, name, email, role FROM users WHERE id = ?', [req.params.id]);
+        if (users.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        res.json(users[0]);
+    } catch (err) {
+        console.error('Get user error:', err);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 app.get('/api/interviews/user/:id', async (req, res) => {
@@ -353,75 +410,75 @@ app.post('/api/analytics/track-view', async (req, res) => {
 
 // ============= SAVED JOBS API =============
 app.post('/api/saved', async (req, res) => {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) {
-        return res.status(401).json({ error: 'Unauthorized' });
-    }
-    
-    try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'jobportal_secret_key_2024');
-        const userId = decoded.id;
-        const { job_id, title, company, location } = req.body;
-        
-        const [existing] = await promisePool.query(
-            'SELECT id FROM saved_jobs WHERE user_id = ? AND job_id = ?',
-            [userId, job_id]
-        );
-        
-        if (existing.length > 0) {
-            return res.status(400).json({ error: 'Job already saved' });
-        }
-        
-        await promisePool.query(
-            'INSERT INTO saved_jobs (user_id, job_id, title, company, location) VALUES (?, ?, ?, ?, ?)',
-            [userId, job_id, title || '', company || '', location || '']
-        );
-        
-        res.json({ success: true, message: 'Job saved successfully!' });
-    } catch (err) {
-        console.error('Save error:', err);
-        res.status(500).json({ error: err.message });
-    }
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'jobportal_secret_key_2024');
+        const userId = decoded.id;
+        const { job_id, title, company, location } = req.body;
+        
+        const [existing] = await promisePool.query(
+            'SELECT id FROM saved_jobs WHERE user_id = ? AND job_id = ?',
+            [userId, job_id]
+        );
+        
+        if (existing.length > 0) {
+            return res.status(400).json({ error: 'Job already saved' });
+        }
+        
+        await promisePool.query(
+            'INSERT INTO saved_jobs (user_id, job_id, title, company, location) VALUES (?, ?, ?, ?, ?)',
+            [userId, job_id, title || '', company || '', location || '']
+        );
+        
+        res.json({ success: true, message: 'Job saved successfully!' });
+    } catch (err) {
+        console.error('Save error:', err);
+        res.status(500).json({ error: err.message });
+    }
 });
 // ይህን ኮድ በ server.js ውስጥ ጨምሪው
 app.get('/api/notifications/user/:userId', async (req, res) => {
-    try {
-        const userId = req.params.userId;
-        
-        // ዳታቤዙ ውስጥ table-ኡ ባይኖር እንኳ እንዳይሰቀስቅ catch ውስጥ እናስገባዋለን
-        const [notifications] = await promisePool.query(
-            'SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC',
-            [userId]
-        );
-        
-        res.json(notifications);
-    } catch (err) {
-        // ሰንጠረዡ ከሌለ ወይም ሌላ ስህተት ቢፈጠር ባዶ ዝርዝር [] እንመልሳለን
-        console.log('Notification table not found, returning empty array');
-        res.json([]); 
-    }
+    try {
+        const userId = req.params.userId;
+        
+        // ዳታቤዙ ውስጥ table-ኡ ባይኖር እንኳ እንዳይሰቀስቅ catch ውስጥ እናስገባዋለን
+        const [notifications] = await promisePool.query(
+            'SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC',
+            [userId]
+        );
+        
+        res.json(notifications);
+    } catch (err) {
+        // ሰንጠረዡ ከሌለ ወይም ሌላ ስህተት ቢፈጠር ባዶ ዝርዝር [] እንመልሳለን
+        console.log('Notification table not found, returning empty array');
+        res.json([]); 
+    }
 });
 
 app.delete('/api/saved/:jobId', async (req, res) => {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) {
-        return res.status(401).json({ error: 'Unauthorized' });
-    }
-    
-    try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'jobportal_secret_key_2024');
-        const userId = decoded.id;
-        
-        await promisePool.query(
-            'DELETE FROM saved_jobs WHERE user_id = ? AND job_id = ?',
-            [userId, req.params.jobId]
-        );
-        
-        res.json({ success: true, message: 'Job removed from saved' });
-    } catch (err) {
-        console.error('Unsave error:', err);
-        res.status(500).json({ error: err.message });
-    }
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'jobportal_secret_key_2024');
+        const userId = decoded.id;
+        
+        await promisePool.query(
+            'DELETE FROM saved_jobs WHERE user_id = ? AND job_id = ?',
+            [userId, req.params.jobId]
+        );
+        
+        res.json({ success: true, message: 'Job removed from saved' });
+    } catch (err) {
+        console.error('Unsave error:', err);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 app.get('/api/saved/check/:jobId', async (req, res) => {
@@ -465,33 +522,33 @@ app.get('/api/saved', async (req, res) => {
 
 // ============= STATS API =============
 app.get('/api/stats', async (req, res) => {
-    try {
-        const [jobsResult, usersResult] = await Promise.all([
-            promisePool.query('SELECT COUNT(*) as count FROM jobs'),
-            promisePool.query('SELECT COUNT(*) as count FROM users')
-        ]);
+    try {
+        const [jobsResult, usersResult] = await Promise.all([
+            promisePool.query('SELECT COUNT(*) as count FROM jobs'),
+            promisePool.query('SELECT COUNT(*) as count FROM users')
+        ]);
 
-        res.json({
-            jobs: jobsResult[0][0].count || 0,
-            users: usersResult[0][0].count || 0,
-            applications: 0,
-            savedJobs: 0,
-            averageRating: '0.0'
-        });
-    } catch (err) {
-        console.error('Stats error:', err);
-        res.status(500).json({ error: err.message });
-    }
+        res.json({
+            jobs: jobsResult[0][0].count || 0,
+            users: usersResult[0][0].count || 0,
+            applications: 0,
+            savedJobs: 0,
+            averageRating: '0.0'
+        });
+    } catch (err) {
+        console.error('Stats error:', err);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // ============= TEST API =============
 app.get('/api/test', async (req, res) => {
-    try {
-        await promisePool.query('SELECT 1');
-        res.json({ message: 'Backend is working!', db: 'connected', timestamp: new Date().toISOString() });
-    } catch (err) {
-        res.json({ message: 'Backend is working!', db: 'error', error: err.message });
-    }
+    try {
+        await promisePool.query('SELECT 1');
+        res.json({ message: 'Backend is working!', db: 'connected', timestamp: new Date().toISOString() });
+    } catch (err) {
+        res.json({ message: 'Backend is working!', db: 'error', error: err.message });
+    }
 });
 // ሁሉንም የሥራ ማመልከቻዎች (Applications) ለAdmin ለማምጣት
 app.get('/api/applications', async (req, res) => {
@@ -592,145 +649,145 @@ app.get('/api/applications/employer/:employerId', async (req, res) => {
 // ============= SOCKET.IO =============
 const server = http.createServer(app);
 const io = socketIo(server, {
-    cors: { 
-        // 127.0.0.1 መጨመር ለ Vite ተጠቃሚዎች በጣም አስፈላጊ ነው
-        origin: ["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000"], 
-        methods: ['GET', 'POST'], 
-        credentials: true 
-    },
-    pingTimeout: 60000, // ግንኙነቱ ቶሎ እንዳይቋረጥ ይረዳል
-    pingInterval: 25000
+    cors: { 
+        // 127.0.0.1 መጨመር ለ Vite ተጠቃሚዎች በጣም አስፈላጊ ነው
+        origin: ["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000"], 
+        methods: ['GET', 'POST'], 
+        credentials: true 
+    },
+    pingTimeout: 60000, // ግንኙነቱ ቶሎ እንዳይቋረጥ ይረዳል
+    pingInterval: 25000
 });
 
 const onlineUsers = new Map();
 
 io.on('connection', (socket) => {
-    console.log('🟢 New client connected:', socket.id);
-    
-    socket.on('user-connected', (userId) => {
-        if (userId) {
-            onlineUsers.set(String(userId), socket.id);
-            io.emit('online-users', Array.from(onlineUsers.keys()));
-            console.log(`✅ User ${userId} is online`);
-        }
-    });
-    
-    socket.on('send-message', async (data) => {
-        const { senderId, receiverId, message } = data;
-        try {
-            const [result] = await promisePool.query(
-                'INSERT INTO messages (sender_id, receiver_id, message, is_read) VALUES (?, ?, ?, false)',
-                [senderId, receiverId, message]
-            );
-            
-            const receiverSocketId = onlineUsers.get(String(receiverId));
-            if (receiverSocketId) {
-                io.to(receiverSocketId).emit('new-message', { 
-                    id: result.insertId, 
-                    senderId, 
-                    message, 
-                    createdAt: new Date() 
-                });
-            }
-            
-            const [unreadResult] = await promisePool.query(
-                'SELECT COUNT(*) as count FROM messages WHERE receiver_id = ? AND is_read = false',
-                [receiverId]
-            );
-            // ያልተነበቡ መልእክቶችን ለተቀባዩ ብቻ መላክ
-            if (receiverSocketId) {
-                io.to(receiverSocketId).emit('unread-update', { userId: receiverId, count: unreadResult[0].count });
-            }
-        } catch (err) {
-            console.error('Send message error:', err);
-        }
-    });
+    console.log('🟢 New client connected:', socket.id);
+    
+    socket.on('user-connected', (userId) => {
+        if (userId) {
+            onlineUsers.set(String(userId), socket.id);
+            io.emit('online-users', Array.from(onlineUsers.keys()));
+            console.log(`✅ User ${userId} is online`);
+        }
+    });
+    
+    socket.on('send-message', async (data) => {
+        const { senderId, receiverId, message } = data;
+        try {
+            const [result] = await promisePool.query(
+                'INSERT INTO messages (sender_id, receiver_id, message, is_read) VALUES (?, ?, ?, false)',
+                [senderId, receiverId, message]
+            );
+            
+            const receiverSocketId = onlineUsers.get(String(receiverId));
+            if (receiverSocketId) {
+                io.to(receiverSocketId).emit('new-message', { 
+                    id: result.insertId, 
+                    senderId, 
+                    message, 
+                    createdAt: new Date() 
+                });
+            }
+            
+            const [unreadResult] = await promisePool.query(
+                'SELECT COUNT(*) as count FROM messages WHERE receiver_id = ? AND is_read = false',
+                [receiverId]
+            );
+            // ያልተነበቡ መልእክቶችን ለተቀባዩ ብቻ መላክ
+            if (receiverSocketId) {
+                io.to(receiverSocketId).emit('unread-update', { userId: receiverId, count: unreadResult[0].count });
+            }
+        } catch (err) {
+            console.error('Send message error:', err);
+        }
+    });
 
-    // የ Typing ኮድ እዚህ ጋር አንድ ጊዜ ብቻ ይበቃል
-    socket.on('typing', ({ senderId, receiverId }) => {
-        const receiverSocketId = onlineUsers.get(String(receiverId));
-        if (receiverSocketId) {
-            io.to(receiverSocketId).emit('user-typing', { userId: senderId });
-        }
-    });
-    
-    socket.on('disconnect', () => {
-        for (let [userId, socketId] of onlineUsers.entries()) {
-            if (socketId === socket.id) {
-                onlineUsers.delete(userId);
-                console.log(`❌ User ${userId} disconnected`);
-                break;
-            }
-        }
-        io.emit('online-users', Array.from(onlineUsers.keys()));
-    });
+    // የ Typing ኮድ እዚህ ጋር አንድ ጊዜ ብቻ ይበቃል
+    socket.on('typing', ({ senderId, receiverId }) => {
+        const receiverSocketId = onlineUsers.get(String(receiverId));
+        if (receiverSocketId) {
+            io.to(receiverSocketId).emit('user-typing', { userId: senderId });
+        }
+    });
+    
+    socket.on('disconnect', () => {
+        for (let [userId, socketId] of onlineUsers.entries()) {
+            if (socketId === socket.id) {
+                onlineUsers.delete(userId);
+                console.log(`❌ User ${userId} disconnected`);
+                break;
+            }
+        }
+        io.emit('online-users', Array.from(onlineUsers.keys()));
+    });
 });
 // ============= OAUTH =============
 passport.serializeUser((user, done) => done(null, user.id));
 passport.deserializeUser(async (id, done) => {
-    try {
-        const [users] = await promisePool.query('SELECT * FROM users WHERE id = ?', [id]);
-        done(null, users[0]);
-    } catch (err) { done(err, null); }
+    try {
+        const [users] = await promisePool.query('SELECT * FROM users WHERE id = ?', [id]);
+        done(null, users[0]);
+    } catch (err) { done(err, null); }
 });
 
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
-    passport.use(new GoogleStrategy({
-        clientID: process.env.GOOGLE_CLIENT_ID,
-        clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-        callbackURL: "/auth/google/callback"
-    }, async (accessToken, refreshToken, profile, done) => {
-        const email = profile.emails[0].value;
-        try {
-            const [users] = await promisePool.query('SELECT * FROM users WHERE email = ?', [email]);
-            if (users.length > 0) return done(null, users[0]);
-            const [result] = await promisePool.query(
-                'INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)',
-                [profile.displayName, email, 'google_oauth', 'applicant']
-            );
-            const [newUser] = await promisePool.query('SELECT * FROM users WHERE id = ?', [result.insertId]);
-            return done(null, newUser[0]);
-        } catch (err) { return done(err, null); }
-    }));
-    
-    app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
-    app.get('/auth/google/callback', 
-    passport.authenticate('google', { failureRedirect: '/login' }), 
-    (req, res) => {
-        // ለጎግል ተጠቃሚው JWT ቶከን እንፈጥራለን
-        const token = generateToken(req.user.id);
+    passport.use(new GoogleStrategy({
+        clientID: process.env.GOOGLE_CLIENT_ID,
+        clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+        callbackURL: "/auth/google/callback"
+    }, async (accessToken, refreshToken, profile, done) => {
+        const email = profile.emails[0].value;
+        try {
+            const [users] = await promisePool.query('SELECT * FROM users WHERE email = ?', [email]);
+            if (users.length > 0) return done(null, users[0]);
+            const [result] = await promisePool.query(
+                'INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)',
+                [profile.displayName, email, 'google_oauth', 'applicant']
+            );
+            const [newUser] = await promisePool.query('SELECT * FROM users WHERE id = ?', [result.insertId]);
+            return done(null, newUser[0]);
+        } catch (err) { return done(err, null); }
+    }));
+    
+    app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
+    app.get('/auth/google/callback', 
+    passport.authenticate('google', { failureRedirect: '/login' }), 
+    (req, res) => {
+        // ለጎግል ተጠቃሚው JWT ቶከን እንፈጥራለን
+        const token = generateToken(req.user.id);
 
-        // ፓስወርድ ካለ ከዳታው ውስጥ እናስወጣለን
-        const { password, ...userWithoutPassword } = req.user;
+        // ፓስወርድ ካለ ከዳታው ውስጥ እናስወጣለን
+        const { password, ...userWithoutPassword } = req.user;
 
-        // ቶከኑን እና ተጠቃሚውን በአንድ ላይ ወደ React እንልካለን
-        const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
-        
-        // encodeURIComponent መጠቀም ዳታው በURL ላይ እንዳይበላሽ ይረዳል
-        const redirectUrl = `${clientUrl}/auth-success?token=${token}&user=${encodeURIComponent(JSON.stringify(userWithoutPassword))}`;
-        
-        res.redirect(redirectUrl);
-    }
+        // ቶከኑን እና ተጠቃሚውን በአንድ ላይ ወደ React እንልካለን
+        const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+        
+        // encodeURIComponent መጠቀም ዳታው በURL ላይ እንዳይበላሽ ይረዳል
+        const redirectUrl = `${clientUrl}/auth-success?token=${token}&user=${encodeURIComponent(JSON.stringify(userWithoutPassword))}`;
+        
+        res.redirect(redirectUrl);
+    }
 );
-    console.log('🔑 Google OAuth: enabled');
+    console.log('🔑 Google OAuth: enabled');
 }
 
 // ============= Global Error Handler =============
 app.use((err, req, res, next) => {
-    console.error('🔥 Global Error Handler:', err.stack);
-    res.status(500).json({ error: 'Something went wrong on the server!' });
+    console.error('🔥 Global Error Handler:', err.stack);
+    res.status(500).json({ error: 'Something went wrong on the server!' });
 });
 
 // ============= START SERVER =============
 server.listen(PORT, () => {
-    console.log(`✅ Server running on http://localhost:${PORT}`);
-    console.log(`📡 Test API: http://localhost:${PORT}/api/test`);
-    console.log(`🔐 Auth API: http://localhost:${PORT}/api/auth`);
-    console.log(`📋 Jobs API: http://localhost:${PORT}/api/jobs`);
-    console.log(`👥 Users API: http://localhost:${PORT}/api/users`);
-    console.log(`💾 Saved API: http://localhost:${PORT}/api/saved`);
-    console.log(`💬 Messages API: http://localhost:${PORT}/api/messages`);
-    console.log(`📊 Analytics API: http://localhost:${PORT}/api/analytics`);
-    console.log(`💬 Chat Socket.IO: ws://localhost:${PORT}`);
+    console.log(`✅ Server running on http://localhost:${PORT}`);
+    console.log(`📡 Test API: http://localhost:${PORT}/api/test`);
+    console.log(`🔐 Auth API: http://localhost:${PORT}/api/auth`);
+    console.log(`📋 Jobs API: http://localhost:${PORT}/api/jobs`);
+    console.log(`👥 Users API: http://localhost:${PORT}/api/users`);
+    console.log(`💾 Saved API: http://localhost:${PORT}/api/saved`);
+    console.log(`💬 Messages API: http://localhost:${PORT}/api/messages`);
+    console.log(`📊 Analytics API: http://localhost:${PORT}/api/analytics`);
+    console.log(`💬 Chat Socket.IO: ws://localhost:${PORT}`);
 });

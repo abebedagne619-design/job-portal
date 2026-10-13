@@ -55,7 +55,7 @@ const Recommendations = ({ user }) => {
     if (!user || !user.id) return;
     try {
         // Node.js ላይ /api/recommendations/skills/:userId መሆኑን አረጋግጥ
-        const res = await fetch(`http://localhost:5000/api/recommendations/skills/${user.id}`);
+        const res = await fetch(`http://localhost:5000/api/users/${user.id}/skills`);
         const data = await res.json();
         if (Array.isArray(data)) {
             setSkills(data.join(', '));
@@ -74,7 +74,7 @@ const Recommendations = ({ user }) => {
             const res = await fetch('http://localhost:5000/api/recommendations/skills', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ userId: user.id, skills: skillsArray })
+                body: JSON.stringify({ user_id: user.id, skills: skillsArray })
             });
             
             if (res.ok) {
