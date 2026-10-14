@@ -337,7 +337,129 @@ app.get('/api/jobs/:id', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+// ============= CREATE JOB (POST) =============
+app.post('/api/jobs', async (req, res) => {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).json({ error: 'Unauthorized' });
+    
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'jobportal_secret_key_2024');
+        const employerId = decoded.id;
+        
+        const { 
+            title, 
+            description, 
+            company, 
+            location, 
+            salary, 
+            type, 
+            requirements,
+            category 
+        } = req.body;
+        
+        console.log(`📢 Creating job for employer ${employerId}:`, { title, company });
+        
+        if (!title || !description) {
+            return res.status(400).json({ error: 'Title and description are required' });
+        }
+        
+        const [result] = await promisePool.query(
+            `INSERT INTO jobs 
+            (title, description, company, location, salary, type, requirements, category, employer_id, views_count, created_at) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NOW())`,
+            [
+                title, 
+                description, 
+                company || null, 
+                location || null, 
+                salary || null, 
+                type || 'Full-time', 
+                requirements || null, 
+                category || null,
+                employerId
+            ]
+        );
+        
+        const [newJob] = await promisePool.query('SELECT * FROM jobs WHERE id = ?', [result.insertId]);
+        
+        console.log(`✅ Job created with ID: ${result.insertId}`);
+        
+        res.status(201).json({ 
+            success: true, 
+            message: 'Job created successfully!',
+            job: newJob[0]
+        });
+        
+    } catch (err) {
+        console.error('❌ Create job error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
 
+// ============= UPDATE JOB (PUT) =============
+app.put('/api/jobs/:id', async (req, res) => {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).json({ error: 'Unauthorized' });
+    
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'jobportal_secret_key_2024');
+        const employerId = decoded.id;
+        
+        const { title, description, company, location, salary, type } = req.body;
+        
+        // የስራ ባለቤት መሆኑን አረጋግጥ
+        const [jobs] = await promisePool.query(
+            'SELECT id FROM jobs WHERE id = ? AND employer_id = ?',
+            [req.params.id, employerId]
+        );
+        
+        if (jobs.length === 0) {
+            return res.status(403).json({ error: 'Not authorized to edit this job' });
+        }
+        
+        await promisePool.query(
+            `UPDATE jobs 
+            SET title = ?, description = ?, company = ?, location = ?, salary = ?, type = ? 
+            WHERE id = ?`,
+            [title, description, company, location, salary, type, req.params.id]
+        );
+        
+        res.json({ success: true, message: 'Job updated successfully!' });
+        
+    } catch (err) {
+        console.error('Update job error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ============= DELETE JOB =============
+app.delete('/api/jobs/:id', async (req, res) => {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).json({ error: 'Unauthorized' });
+    
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'jobportal_secret_key_2024');
+        const employerId = decoded.id;
+        
+        // የስራ ባለቤት መሆኑን አረጋግጥ
+        const [jobs] = await promisePool.query(
+            'SELECT id FROM jobs WHERE id = ? AND employer_id = ?',
+            [req.params.id, employerId]
+        );
+        
+        if (jobs.length === 0) {
+            return res.status(403).json({ error: 'Not authorized to delete this job' });
+        }
+        
+        await promisePool.query('DELETE FROM jobs WHERE id = ?', [req.params.id]);
+        
+        res.json({ success: true, message: 'Job deleted successfully!' });
+        
+    } catch (err) {
+        console.error('Delete job error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
 // ============= USERS API =============
 app.get('/api/users', async (req, res) => {
     try {
