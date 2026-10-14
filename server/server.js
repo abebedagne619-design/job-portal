@@ -130,7 +130,7 @@ app.get('/api/recommendations/skills/:userId', async (req, res) => {
         let skills = [];
         try {
             const [skillRows] = await promisePool.query(
-                'SELECT skill FROM user_skills WHERE user_id = ?', 
+                'SELECT DISTINCT skill FROM user_skills WHERE user_id = ?', 
                 [userId]
             );
             skills = skillRows.map(row => row.skill);
@@ -361,6 +361,27 @@ app.get('/api/users/:id', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+// ============= GET USER SKILLS =============
+app.get('/api/users/:userId/skills', async (req, res) => {
+    try {
+        const userId = req.params.userId;
+        
+        console.log(`📚 Fetching skills for user: ${userId}`);
+        
+        const [rows] = await promisePool.query(
+            'SELECT skill FROM user_skills WHERE user_id = ?',
+            [userId]
+        );
+        
+        const skills = rows.map(row => row.skill);
+        console.log(`✅ Found ${skills.length} skills for user ${userId}`);
+        
+        res.json(skills);
+    } catch (err) {
+        console.error('❌ Get skills error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
 
 app.get('/api/interviews/user/:id', async (req, res) => {
     try {
@@ -456,6 +477,115 @@ app.get('/api/notifications/user/:userId', async (req, res) => {
         // ሰንጠረዡ ከሌለ ወይም ሌላ ስህተት ቢፈጠር ባዶ ዝርዝር [] እንመልሳለን
         console.log('Notification table not found, returning empty array');
         res.json([]); 
+    }
+});
+// ============= JOB ALERTS API =============
+// ማስታወሻ: ይህን ከ /api/notifications/user/:userId በኋላ ጨምር
+
+// 1. Create Job Alert
+app.post('/api/alerts', async (req, res) => {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).json({ error: 'Unauthorized' });
+    
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'jobportal_secret_key_2024');
+        const userId = decoded.id;
+        const { keyword, location, type, salary_min, salary_max } = req.body;
+        
+        console.log(`📢 Creating alert for user ${userId}:`, { keyword, location, type });
+        
+        // ሰንጠረዡ ከሌለ ፍጠር
+        await promisePool.query(`
+            CREATE TABLE IF NOT EXISTS job_alerts (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id INT NOT NULL,
+                keyword VARCHAR(255),
+                location VARCHAR(255),
+                type VARCHAR(50),
+                salary_min INT,
+                salary_max INT,
+                is_active BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_user (user_id)
+            )
+        `);
+        
+        const [result] = await promisePool.query(
+            'INSERT INTO job_alerts (user_id, keyword, location, type, salary_min, salary_max) VALUES (?, ?, ?, ?, ?, ?)',
+            [userId, keyword || null, location || null, type || null, salary_min || null, salary_max || null]
+        );
+        
+        res.json({ 
+            success: true, 
+            message: 'Job alert created successfully!',
+            alertId: result.insertId
+        });
+    } catch (err) {
+        console.error('Create alert error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 2. Get User Alerts
+app.get('/api/alerts', async (req, res) => {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).json({ error: 'Unauthorized' });
+    
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'jobportal_secret_key_2024');
+        const userId = decoded.id;
+        
+        const [alerts] = await promisePool.query(
+            'SELECT * FROM job_alerts WHERE user_id = ? ORDER BY created_at DESC',
+            [userId]
+        );
+        
+        res.json(alerts);
+    } catch (err) {
+        console.error('Get alerts error:', err);
+        res.json([]);
+    }
+});
+
+// 3. Delete Alert
+app.delete('/api/alerts/:id', async (req, res) => {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).json({ error: 'Unauthorized' });
+    
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'jobportal_secret_key_2024');
+        const userId = decoded.id;
+        
+        await promisePool.query(
+            'DELETE FROM job_alerts WHERE id = ? AND user_id = ?',
+            [req.params.id, userId]
+        );
+        
+        res.json({ success: true, message: 'Alert deleted' });
+    } catch (err) {
+        console.error('Delete alert error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 4. Toggle Alert (Active/Inactive)
+app.put('/api/alerts/:id/toggle', async (req, res) => {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).json({ error: 'Unauthorized' });
+    
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'jobportal_secret_key_2024');
+        const userId = decoded.id;
+        
+        await promisePool.query(
+            'UPDATE job_alerts SET is_active = NOT is_active WHERE id = ? AND user_id = ?',
+            [req.params.id, userId]
+        );
+        
+        res.json({ success: true, message: 'Alert toggled' });
+    } catch (err) {
+        console.error('Toggle alert error:', err);
+        res.status(500).json({ error: err.message });
     }
 });
 
