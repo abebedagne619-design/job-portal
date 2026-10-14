@@ -67,6 +67,7 @@ const Navbar = ({ user, setUser, setCurrentPage, onLogout, currentPage }) => {
             socket.on('unread-update', (data) => {
                 if (String(data.userId) === String(user.id)) {
                     setUnreadCount(data.count);
+                    fetchUnreadCount();
                 }
             });
 

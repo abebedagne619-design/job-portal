@@ -51,7 +51,7 @@ const Chat = ({ user, otherUser, onClose }) => {
     }, [otherUser?.id, user?.id]);
 
     useEffect(() => {
-        scrollToBottom();
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages]);
 
     const fetchMessages = async () => {
@@ -66,10 +66,6 @@ const Chat = ({ user, otherUser, onClose }) => {
             console.error('Error fetching messages:', err);
             setLoading(false);
         }
-    };
-
-    const scrollToBottom = () => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     };
 
     const sendMessage = () => {

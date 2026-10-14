@@ -2,7 +2,6 @@ const express = require('express');
 const router = express.Router();
 const mysql = require('mysql2');
 
-// ✅ MySQL Pool setup
 const pool = mysql.createPool({
     host: process.env.DB_HOST || '127.0.0.1',
     user: process.env.DB_USER || 'root',
@@ -86,7 +85,6 @@ router.get('/:userId/:otherUserId', async (req, res) => {
             ORDER BY created_at ASC
         `, [req.params.userId, req.params.otherUserId, req.params.otherUserId, req.params.userId]);
         
-        // Mark messages as read
         await promisePool.query(
             'UPDATE messages SET is_read = true WHERE sender_id = ? AND receiver_id = ? AND is_read = false',
             [req.params.otherUserId, req.params.userId]

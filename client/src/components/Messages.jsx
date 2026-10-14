@@ -100,10 +100,6 @@ const Messages = ({ user, setCurrentPage }) => {
         setSelectedUser(conv);
     };
 
-    const closeChat = () => {
-        setSelectedUser(null);
-    };
-
     const toggleMinimize = () => {
         setIsMinimized(!isMinimized);
     };
