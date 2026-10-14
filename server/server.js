@@ -898,6 +898,80 @@ app.get('/api/applications/employer/:employerId', async (req, res) => {
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
+// ============= UPDATE APPLICATION STATUS =============
+app.put('/api/applications/:id/status', async (req, res) => {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).json({ error: 'Unauthorized' });
+    
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'jobportal_secret_key_2024');
+        const { status } = req.body;
+        
+        console.log(`📝 Updating application ${req.params.id} status to: ${status}`);
+        
+        if (!status) {
+            return res.status(400).json({ error: 'Status is required' });
+        }
+        
+        const validStatuses = ['pending', 'reviewed', 'accepted', 'rejected'];
+        if (!validStatuses.includes(status)) {
+            return res.status(400).json({ error: 'Invalid status' });
+        }
+        
+        const [result] = await promisePool.query(
+            'UPDATE applications SET status = ? WHERE id = ?',
+            [status, req.params.id]
+        );
+        
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: 'Application not found' });
+        }
+        
+        console.log(`✅ Application ${req.params.id} updated to: ${status}`);
+        
+        res.json({ 
+            success: true, 
+            message: 'Application status updated!',
+            status: status
+        });
+        
+    } catch (err) {
+        console.error('❌ Update application error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ============= DELETE APPLICATION =============
+app.delete('/api/applications/:id', async (req, res) => {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).json({ error: 'Unauthorized' });
+    
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'jobportal_secret_key_2024');
+        
+        console.log(`🗑️ Deleting application ${req.params.id}`);
+        
+        const [result] = await promisePool.query(
+            'DELETE FROM applications WHERE id = ?',
+            [req.params.id]
+        );
+        
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: 'Application not found' });
+        }
+        
+        console.log(`✅ Application ${req.params.id} deleted`);
+        
+        res.json({ 
+            success: true, 
+            message: 'Application deleted successfully!'
+        });
+        
+    } catch (err) {
+        console.error('❌ Delete application error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
 // ============= SOCKET.IO =============
 const server = http.createServer(app);
 const io = socketIo(server, {
