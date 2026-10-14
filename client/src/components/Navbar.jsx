@@ -4,7 +4,6 @@ import ChangePassword from './ChangePassword';
 import Chat from './Chat';
 import io from 'socket.io-client';
 
-
 const Navbar = ({ user, setUser, setCurrentPage, onLogout, currentPage }) => {
     const { language, setLanguage, t } = useLanguage();
     const [showChangePassword, setShowChangePassword] = useState(false);
@@ -17,22 +16,21 @@ const Navbar = ({ user, setUser, setCurrentPage, onLogout, currentPage }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const socketRef = useRef();
 
-   const fetchUnreadCount = async () => {
-    if (!user) return;
-    try {
-        const res = await fetch(`http://localhost:5000/api/messages/unread/${user.id}`);
-        
-        // ሰርቨሩ ዳታውን በትክክል ከላከ ብቻ parse እናድርገው
-        if (res.ok) {
-            const data = await res.json();
-            setUnreadCount(data.count || 0);
-        } else {
-            console.warn(`API Error: ${res.status}`);
+    const fetchUnreadCount = async () => {
+        if (!user) return;
+        try {
+            const res = await fetch(`http://localhost:5000/api/messages/unread/${user.id}`);
+            
+            if (res.ok) {
+                const data = await res.json();
+                setUnreadCount(data.count || 0);
+            } else {
+                console.warn(`API Error: ${res.status}`);
+            }
+        } catch (err) {
+            console.error('Network Error:', err);
         }
-    } catch (err) {
-        console.error('Network Error:', err);
-    }
-};
+    };
 
     const fetchAvailableUsers = async () => {
         if (!user) return;
@@ -46,52 +44,48 @@ const Navbar = ({ user, setUser, setCurrentPage, onLogout, currentPage }) => {
         }
     };
 
-useEffect(() => {
-    let socket;
+    useEffect(() => {
+        let socket;
 
-    if (user && user.id) {
-        fetchUnreadCount();
-        fetchAvailableUsers();
-
-        // ግንኙነቱን መፍጠር
-        socket = io('http://localhost:5000', {
-            transports: ['websocket', 'polling'],
-            reconnection: true,
-            reconnectionAttempts: 5
-        });
-
-        socketRef.current = socket;
-
-        socket.on('connect', () => {
-            console.log('Connected to socket');
-            socket.emit('user-connected', user.id);
-        });
-
-        socket.on('unread-update', (data) => {
-            if (String(data.userId) === String(user.id)) {
-                setUnreadCount(data.count);
-            }
-        });
-
-        socket.on('new-message', () => {
+        if (user && user.id) {
             fetchUnreadCount();
-        });
-    }
+            fetchAvailableUsers();
 
-    // Cleanup function
-    return () => {
-        if (socket) {
-            // ግንኙነቱ ክፍት ከሆነ ብቻ እንዲዘጋ በማድረግ ስህተቱን መከላከል
-            if (socket.connected) {
-                socket.disconnect();
-            } else {
-                // ገና በመገናኘት ላይ ከሆነ ለጥቂት ጊዜ ቆይቶ እንዲዘጋ ማድረግ
-                socket.once('connect', () => socket.disconnect());
-            }
-            socketRef.current = null;
+            socket = io('http://localhost:5000', {
+                transports: ['websocket', 'polling'],
+                reconnection: true,
+                reconnectionAttempts: 5
+            });
+
+            socketRef.current = socket;
+
+            socket.on('connect', () => {
+                console.log('Connected to socket');
+                socket.emit('user-connected', user.id);
+            });
+
+            socket.on('unread-update', (data) => {
+                if (String(data.userId) === String(user.id)) {
+                    setUnreadCount(data.count);
+                }
+            });
+
+            socket.on('new-message', () => {
+                fetchUnreadCount();
+            });
         }
-    };
-}, [user?.id]); // ተጠቃሚው ሲቀየር ብቻ እንዲሰራ
+
+        return () => {
+            if (socket) {
+                if (socket.connected) {
+                    socket.disconnect();
+                } else {
+                    socket.once('connect', () => socket.disconnect());
+                }
+                socketRef.current = null;
+            }
+        };
+    }, [user?.id]);
 
     const handleLogout = () => {
         setUser(null);
@@ -301,6 +295,7 @@ useEffect(() => {
 
             {user && (
                 <button 
+                    type="button"
                     style={styles.aiBtn(currentPage === 'recommendations')} 
                     onClick={() => { setCurrentPage('recommendations'); if(isMobile) setIsMobileMenuOpen(false); }}
                 >
@@ -319,22 +314,48 @@ useEffect(() => {
                     </div>
                     
                     <div style={styles.userSection}>
-                        <button style={styles.btnOutline} onClick={() => setLanguage(l => l === 'en' ? 'am' : 'en')}>
+                        <button 
+                            type="button"
+                            style={styles.btnOutline} 
+                            onClick={() => setLanguage(l => l === 'en' ? 'am' : 'en')}
+                        >
                             {language === 'en' ? 'አማርኛ' : 'English'}
                         </button>
                         
                         {user ? (
                             <>
                                 <span style={{ color: '#fff', fontSize: '0.9rem', fontWeight: '500' }}>👋 {user.name}</span>
-                                <button style={styles.btnOutline} onClick={() => setShowChangePassword(true)}>
+                                <button 
+                                    type="button"
+                                    style={styles.btnOutline} 
+                                    onClick={() => setShowChangePassword(true)}
+                                >
                                     🔐 {t.changePassword || 'Change Password'}
                                 </button>
-                                <button style={styles.btn} onClick={handleLogout}>{t.logout}</button>
+                                <button 
+                                    type="button"
+                                    style={styles.btn} 
+                                    onClick={handleLogout}
+                                >
+                                    {t.logout}
+                                </button>
                             </>
                         ) : (
                             <div style={{ display: 'flex', gap: '10px' }}>
-                                <button style={styles.btn} onClick={() => setCurrentPage('login')}>{t.login}</button>
-                                <button style={styles.btnOutline} onClick={() => setCurrentPage('register')}>{t.register}</button>
+                                <button 
+                                    type="button"
+                                    style={styles.btn} 
+                                    onClick={() => setCurrentPage('login')}
+                                >
+                                    {t.login}
+                                </button>
+                                <button 
+                                    type="button"
+                                    style={styles.btnOutline} 
+                                    onClick={() => setCurrentPage('register')}
+                                >
+                                    {t.register}
+                                </button>
                             </div>
                         )}
 
@@ -367,6 +388,7 @@ useEffect(() => {
                     boxShadow: '0 15px 35px rgba(0,0,0,0.7)', border: '1px solid #2ecc71'
                 }}>
                     <button 
+                        type="button"
                         onClick={() => { setCurrentPage('messages'); setShowUserMenu(false); }}
                         style={{ width: '100%', background: '#2ecc71', color: '#fff', border: 'none', padding: '12px', borderRadius: '8px', cursor: 'pointer', marginBottom: '15px', fontWeight: 'bold' }}
                     >
@@ -386,7 +408,13 @@ useEffect(() => {
                             </div>
                         ))}
                     </div>
-                    <button onClick={() => setShowUserMenu(false)} style={{ width: '100%', marginTop: '15px', background: 'transparent', color: '#ef4444', border: '1px solid #ef4444', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}>Close</button>
+                    <button 
+                        type="button"
+                        onClick={() => setShowUserMenu(false)} 
+                        style={{ width: '100%', marginTop: '15px', background: 'transparent', color: '#ef4444', border: '1px solid #ef4444', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}
+                    >
+                        Close
+                    </button>
                 </div>
             )}
 

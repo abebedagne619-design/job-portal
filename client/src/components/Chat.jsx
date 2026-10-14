@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 
-// ✅ እንዲህ ብታደርገው ይሻላል
 const socket = io('http://localhost:5000', {
-    transports: ['websocket', 'polling'], // የግንኙነት ስህተትን ለመከላከል
+    transports: ['websocket', 'polling'],
     withCredentials: true
 });
 
@@ -13,10 +12,9 @@ const Chat = ({ user, otherUser, onClose }) => {
     const [isTyping, setIsTyping] = useState(false);
     const [online, setOnline] = useState(false);
     const [loading, setLoading] = useState(true);
-    const [isMinimized, setIsMinimized] = useState(false); // ✅ የተጨመረው ሁኔታ
+    const [isMinimized, setIsMinimized] = useState(false);
     const messagesEndRef = useRef(null);
     const typingTimeoutRef = useRef(null);
-    //let typingTimeout;
 
     useEffect(() => {
         if (user?.id) {
@@ -24,34 +22,33 @@ const Chat = ({ user, otherUser, onClose }) => {
             socket.emit('user-connected', user.id);
         }
 
-        socket.on('new-message', (message) => {
+        const handleNewMessage = (message) => {
             if (message.senderId === otherUser?.id) {
                 setMessages(prev => [...prev, { ...message, is_read: false }]);
-                // ቻቱ ከተቀነሰ እና አዲስ መልእክት ሲመጣ ማስታወቂያ ማሳየት
-                if (isMinimized) {
-                    // አማራጭ: ማስታወቂያ ማሳየት
-                    console.log(`New message from ${otherUser?.name}`);
-                }
             }
-        });
+        };
 
-        socket.on('user-typing', ({ userId }) => {
+        const handleTyping = ({ userId }) => {
             if (userId === otherUser?.id) {
                 setIsTyping(true);
                 setTimeout(() => setIsTyping(false), 1000);
             }
-        });
+        };
 
-        socket.on('online-users', (users) => {
+        const handleOnlineUsers = (users) => {
             setOnline(users.includes(otherUser?.id));
-        });
+        };
+
+        socket.on('new-message', handleNewMessage);
+        socket.on('user-typing', handleTyping);
+        socket.on('online-users', handleOnlineUsers);
 
         return () => {
-            socket.off('new-message');
-            socket.off('user-typing');
-            socket.off('online-users');
+            socket.off('new-message', handleNewMessage);
+            socket.off('user-typing', handleTyping);
+            socket.off('online-users', handleOnlineUsers);
         };
-    }, [otherUser?.id, user?.id, isMinimized]);
+    }, [otherUser?.id, user?.id]);
 
     useEffect(() => {
         scrollToBottom();
@@ -96,17 +93,10 @@ const Chat = ({ user, otherUser, onClose }) => {
     };
 
     const handleTyping = () => {
-    // 1. ለሰርቨሩ መረጃውን ይልካል
-    socket.emit('typing', { senderId: user.id, receiverId: otherUser.id });
-    
-    // 2. ቀድሞ የነበረውን ታይመር ያጠፋል
-    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-    
-    // 3. ከ1.5 ሰከንድ በኋላ ታይፒንግ እንዲቆም ያደርጋል
-    typingTimeoutRef.current = setTimeout(() => {
-        // አስፈላጊ ከሆነ እዚህ ጋር 'stop-typing' emit ማድረግ ትችላለህ
-    }, 1500);
-};
+        socket.emit('typing', { senderId: user.id, receiverId: otherUser.id });
+        if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+        typingTimeoutRef.current = setTimeout(() => {}, 1500);
+    };
 
     const getMessageStyle = (msg) => {
         if (msg.sender_id === user.id) {
@@ -116,7 +106,6 @@ const Chat = ({ user, otherUser, onClose }) => {
         }
     };
 
-    // ✅ የማስፋት/ማሳነስ ተግባር
     const toggleMinimize = () => {
         setIsMinimized(!isMinimized);
     };
@@ -287,7 +276,6 @@ const Chat = ({ user, otherUser, onClose }) => {
         }
     };
 
-    // ለማሳነስ ሁኔታ የተለየ ይዘት
     if (isMinimized) {
         const unreadMessages = messages.filter(m => m.sender_id !== user.id && !m.is_read).length;
         
@@ -303,6 +291,7 @@ const Chat = ({ user, otherUser, onClose }) => {
                     </div>
                     <div style={styles.headerButtons}>
                         <button 
+                            type="button"
                             style={styles.minimizeBtn}
                             onClick={(e) => {
                                 e.stopPropagation();
@@ -312,6 +301,7 @@ const Chat = ({ user, otherUser, onClose }) => {
                             □
                         </button>
                         <button 
+                            type="button"
                             style={styles.closeBtn}
                             onClick={(e) => {
                                 e.stopPropagation();
@@ -343,6 +333,7 @@ const Chat = ({ user, otherUser, onClose }) => {
                     </div>
                     <div style={styles.headerButtons}>
                         <button 
+                            type="button"
                             style={styles.minimizeBtn}
                             onClick={(e) => {
                                 e.stopPropagation();
@@ -352,6 +343,7 @@ const Chat = ({ user, otherUser, onClose }) => {
                             _
                         </button>
                         <button 
+                            type="button"
                             style={styles.closeBtn}
                             onClick={(e) => {
                                 e.stopPropagation();
@@ -376,6 +368,7 @@ const Chat = ({ user, otherUser, onClose }) => {
                 </div>
                 <div style={styles.headerButtons}>
                     <button 
+                        type="button"
                         style={styles.minimizeBtn}
                         onClick={(e) => {
                             e.stopPropagation();
@@ -385,6 +378,7 @@ const Chat = ({ user, otherUser, onClose }) => {
                         _
                     </button>
                     <button 
+                        type="button"
                         style={styles.closeBtn}
                         onClick={(e) => {
                             e.stopPropagation();
@@ -429,7 +423,13 @@ const Chat = ({ user, otherUser, onClose }) => {
                     onKeyUp={handleTyping}
                     placeholder="Type a message..."
                 />
-                <button style={styles.sendBtn} onClick={sendMessage}>Send</button>
+                <button 
+                    type="button"
+                    style={styles.sendBtn} 
+                    onClick={sendMessage}
+                >
+                    Send
+                </button>
             </div>
         </div>
     );

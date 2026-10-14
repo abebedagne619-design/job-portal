@@ -1,44 +1,42 @@
 import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
-import Chat from './Chat'; // ቻት ኮምፖነንት እንደገና ጥቅም ላይ ማዋል
+import Chat from './Chat';
 
 const Messages = ({ user, setCurrentPage }) => {
     const [conversations, setConversations] = useState([]);
     const [selectedUser, setSelectedUser] = useState(null);
     const [messages, setMessages] = useState([]);
     const [newMessage, setNewMessage] = useState('');
-    const [isMinimized, setIsMinimized] = useState(false); // ለሙሉ ገጹ ማሳነስ/ማስፋት
-    const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false); // የጎን አሞሌ መደበቅ/መክፈት
+    const [isMinimized, setIsMinimized] = useState(false);
+    const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
     const socket = useRef();
     const scrollRef = useRef();
     const BASE_URL = 'http://localhost:5000';
     const API_URL = `${BASE_URL}/api/messages`;
 
-    // Socket.io ግንኙነት መጀመር
- useEffect(() => {
-    socket.current = io('http://localhost:5000');
-    
-    // ... የተቀረው ሶኬት ኮድ
+    useEffect(() => {
+        socket.current = io('http://localhost:5000');
+        
+        const handleNewMessage = (data) => {
+            if (selectedUser?.other_user_id === data.senderId) {
+                setMessages((prev) => [...prev, {
+                    id: data.id,
+                    sender_id: data.senderId,
+                    message: data.message,
+                    created_at: data.createdAt
+                }]);
+            }
+            fetchConversations();
+        };
 
-    socket.current.on('new-message', (data) => {
-        // እዚህ ጋር selectedUser ወቅታዊ መሆኑን ያረጋግጣል
-        if (selectedUser?.other_user_id === data.senderId) {
-            setMessages((prev) => [...prev, {
-                id: data.id,
-                sender_id: data.senderId,
-                message: data.message,
-                created_at: data.createdAt
-            }]);
-        }
-        fetchConversations();
-    });
+        socket.current.on('new-message', handleNewMessage);
 
-    return () => {
-        socket.current.off('new-message'); // ይሄ አስፈላጊ ነው! 
-        socket.current.disconnect();
-    };
-}, [user, selectedUser]); // <--- selectedUser እዚህ መግባት አለበት
-    // የሰዎችን ዝርዝር ማምጣት
+        return () => {
+            socket.current.off('new-message', handleNewMessage);
+            socket.current.disconnect();
+        };
+    }, [user?.id, selectedUser?.other_user_id]);
+
     const fetchConversations = async () => {
         if (!user?.id) return;
         try {
@@ -54,9 +52,8 @@ const Messages = ({ user, setCurrentPage }) => {
 
     useEffect(() => {
         if (user?.id) fetchConversations();
-    }, [user]);
+    }, [user?.id]);
 
-    // የተመረጠውን ሰው መልእክቶች ማምጣት
     useEffect(() => {
         const fetchMessages = async () => {
             if (!selectedUser || !user?.id) return;
@@ -72,9 +69,8 @@ const Messages = ({ user, setCurrentPage }) => {
             }
         };
         fetchMessages();
-    }, [selectedUser, user]);
+    }, [selectedUser, user?.id]);
 
-    // መልእክት መላክ
     const handleSendMessage = async (e) => {
         e.preventDefault();
         if (!newMessage.trim() || !selectedUser) return;
@@ -100,22 +96,18 @@ const Messages = ({ user, setCurrentPage }) => {
         scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages]);
 
-    // ቻት ኮምፖነንት ለመክፈት
     const openChat = (conv) => {
         setSelectedUser(conv);
     };
 
-    // ቻት ኮምፖነንት ለመዝጋት
     const closeChat = () => {
         setSelectedUser(null);
     };
 
-    // ሙሉ ገጹን ማሳነስ/ማስፋት
     const toggleMinimize = () => {
         setIsMinimized(!isMinimized);
     };
 
-    // የጎን አሞሌ መደበቅ/መክፈት
     const toggleSidebar = () => {
         setIsSidebarCollapsed(!isSidebarCollapsed);
     };
@@ -316,7 +308,6 @@ const Messages = ({ user, setCurrentPage }) => {
         }
     };
 
-    // ለማሳነስ ሁኔታ - ቀለል ያለ እይታ
     if (isMinimized) {
         const totalUnread = conversations.reduce((sum, conv) => sum + (conv.unread_count || 0), 0);
         
@@ -324,7 +315,12 @@ const Messages = ({ user, setCurrentPage }) => {
             <div style={styles.container}>
                 <div style={styles.header} onClick={toggleMinimize}>
                     <h3 style={styles.title}>💬 Messages</h3>
-                    <button style={styles.minimizeBtn}>Maximize</button>
+                    <button 
+                        type="button"
+                        style={styles.minimizeBtn}
+                    >
+                        Maximize
+                    </button>
                 </div>
                 <div style={styles.minimizedPreview}>
                     <span>📨 {conversations.length} conversations</span>
@@ -342,14 +338,18 @@ const Messages = ({ user, setCurrentPage }) => {
 
     return (
         <div style={styles.container}>
-            {/* Header with Close Button */}
             <div style={styles.header}>
                 <h2 style={styles.title}>💬 Messages</h2>
                 <div style={{ display: 'flex', gap: '10px' }}>
-                    <button style={styles.minimizeBtn} onClick={toggleMinimize}>
+                    <button 
+                        type="button"
+                        style={styles.minimizeBtn} 
+                        onClick={toggleMinimize}
+                    >
                         Minimize
                     </button>
                     <button 
+                        type="button"
                         style={styles.closeBtn} 
                         onClick={() => setCurrentPage('jobs')}
                     >
@@ -359,11 +359,13 @@ const Messages = ({ user, setCurrentPage }) => {
             </div>
 
             <div style={styles.chatContainer}>
-                {/* Sidebar - የጎን አሞሌ */}
                 <div style={styles.sidebar}>
                     <div style={styles.sidebarHeader} onClick={toggleSidebar}>
                         <span style={styles.sidebarTitle}>📋 Conversations</span>
-                        <button style={styles.toggleBtn}>
+                        <button 
+                            type="button"
+                            style={styles.toggleBtn}
+                        >
                             {isSidebarCollapsed ? '▶' : '◀'}
                         </button>
                     </div>
@@ -400,7 +402,6 @@ const Messages = ({ user, setCurrentPage }) => {
                     )}
                 </div>
 
-                {/* Chat Window - የምልክት መስኮት */}
                 <div style={styles.chatWindow}>
                     {selectedUser ? (
                         <>
