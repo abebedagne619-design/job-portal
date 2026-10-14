@@ -56,11 +56,15 @@ const AdminDashboard = ({ user }) => {
         }
 
         try {
-            const res = await fetch('http://localhost:5000/api/jobs', {
-                method: 'POST', 
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(newJob)
-            });
+          const token = localStorage.getItem('token');
+const res = await fetch('http://localhost:5000/api/jobs', {
+    method: 'POST', 
+    headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`   // ✅ ጨምር!
+    },
+    body: JSON.stringify(newJob)
+});
 
             if (res.ok) {
                 alert('Job added successfully!');
@@ -74,18 +78,28 @@ const AdminDashboard = ({ user }) => {
 
     const deleteJob = async (id) => {
         if (window.confirm('Delete this job?')) {
-            await fetch(`http://localhost:5000/api/jobs/${id}`, { method: 'DELETE' });
+            const token = localStorage.getItem('token');
+await fetch(`http://localhost:5000/api/jobs/${id}`, { 
+    method: 'DELETE',
+    headers: {
+        'Authorization': `Bearer ${token}`   // ✅ ጨምር!
+    }
+});
             fetchData();
         }
     };
 
     const updateApplicationStatus = async (id, status) => {
         try {
-            await fetch(`http://localhost:5000/api/applications/${id}/status`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ status })
-            });
+          const token = localStorage.getItem('token');
+await fetch(`http://localhost:5000/api/applications/${id}/status`, {
+    method: 'PUT',
+    headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`   // ✅ ጨምር!
+    },
+    body: JSON.stringify({ status })
+});
             fetchData();
             alert('Status updated!');
         } catch (err) {
@@ -95,7 +109,13 @@ const AdminDashboard = ({ user }) => {
 
     const deleteApplication = async (id) => {
         if (window.confirm('Delete this application?')) {
-            await fetch(`http://localhost:5000/api/applications/${id}`, { method: 'DELETE' });
+           const token = localStorage.getItem('token');
+await fetch(`http://localhost:5000/api/applications/${id}`, { 
+    method: 'DELETE',
+    headers: {
+        'Authorization': `Bearer ${token}`   // ✅ ጨምር!
+    }
+});
             fetchData();
         }
     };
