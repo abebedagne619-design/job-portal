@@ -238,6 +238,13 @@ const Messages = ({ user, setCurrentPage }) => {
             maxWidth: '70%',
             wordWrap: 'break-word'
         }),
+        senderName: {
+            fontSize: '0.7rem',
+            fontWeight: 'bold',
+            opacity: 0.8,
+            marginBottom: '3px',
+            color: 'inherit'
+        },
         time: {
             fontSize: '0.6rem',
             marginTop: '5px',
@@ -413,6 +420,9 @@ const Messages = ({ user, setCurrentPage }) => {
                                 ) : (
                                     messages.map((m, i) => (
                                         <div key={i} style={styles.bubble(m.sender_id === user.id)}>
+                                            <div style={styles.senderName}>
+                                                {m.sender_id === user.id ? '👤 You' : `👤 ${selectedUser?.other_user_name || 'User'}`}
+                                            </div>
                                             {m.message}
                                             <div style={styles.time}>
                                                 {new Date(m.created_at).toLocaleTimeString([], { 
