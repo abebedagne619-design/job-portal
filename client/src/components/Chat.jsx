@@ -212,6 +212,13 @@ const Chat = ({ user, otherUser, onClose }) => {
             opacity: 0.7,
             color: '#fff'
         },
+        senderName: {
+            fontSize: '0.7rem',
+            fontWeight: 'bold',
+            opacity: 0.8,
+            marginBottom: '3px',
+            color: 'inherit'
+        },
         time: {
             fontSize: '0.65rem',
             opacity: 0.7,
@@ -394,6 +401,9 @@ const Chat = ({ user, otherUser, onClose }) => {
                 ) : (
                     messages.map((msg, idx) => (
                         <div key={idx} style={getMessageStyle(msg)}>
+                            <div style={styles.senderName}>
+                                {msg.sender_id === user.id ? '👤 You' : `👤 ${otherUser?.name || 'User'}`}
+                            </div>
                             <div>{msg.message}</div>
                             <div style={styles.time}>
                                 {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
