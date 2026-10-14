@@ -21,23 +21,38 @@ const JobAlerts = ({ user }) => {
 
         setLoading(true);
         try {
+            // ✅ Token ከ localStorage አምጣ
+            const token = localStorage.getItem('token');
+            
+            console.log('📤 Sending alert:', { keyword, location, type: jobType });
+            console.log('🔑 Token:', token ? 'Exists' : 'Missing!');
+
             const res = await fetch('http://localhost:5000/api/alerts', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`   // ✅ Token ጨምር!
+                },
                 body: JSON.stringify({ 
-                    userId: user.id, 
+                    // ✅ 'user_id' አትላክ - Backend ከ JWT ያገኘዋል!
                     keyword, 
                     location, 
-                    jobType 
+                    type: jobType   // ✅ 'jobType' ሳይሆን 'type'
                 })
             });
 
             if (res.ok) {
+                const data = await res.json();
+                console.log('✅ Alert created:', data);
                 alert('🚀 Job alert created successfully!');
                 // ፎርሙን ባዶ ማድረግ
                 setKeyword('');
                 setLocation('');
                 setJobType('');
+            } else {
+                const errorData = await res.json();
+                console.error('❌ Server error:', errorData);
+                alert(`Failed: ${errorData.error || 'Unknown error'}`);
             }
         } catch (err) {
             console.error('❌ Error creating alert:', err);
