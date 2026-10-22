@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
-import Chat from './Chat';
 
 const Messages = ({ user, setCurrentPage }) => {
     const [conversations, setConversations] = useState([]);
@@ -9,16 +8,26 @@ const Messages = ({ user, setCurrentPage }) => {
     const [newMessage, setNewMessage] = useState('');
     const [isMinimized, setIsMinimized] = useState(false);
     const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+    
+    const [allUsers, setAllUsers] = useState([]); 
+    const [showSearch, setShowSearch] = useState(false);
+    const [searchTerm, setSearchTerm] = useState('');
+
+    // ✅ ላኪ ለመምረጥ የተጨመሩ ስቴቶች
+    const [senders, setSenders] = useState([]);
+    const [senderId, setSenderId] = useState('');
+
     const socket = useRef();
     const scrollRef = useRef();
     const BASE_URL = 'http://localhost:5000';
     const API_URL = `${BASE_URL}/api/messages`;
 
+    // Socket.io ግንኙነት
     useEffect(() => {
         socket.current = io('http://localhost:5000');
         
         const handleNewMessage = (data) => {
-            if (selectedUser?.other_user_id === data.senderId) {
+            if (String(selectedUser?.other_user_id) === String(data.senderId)) {
                 setMessages((prev) => [...prev, {
                     id: data.id,
                     sender_id: data.senderId,
@@ -50,10 +59,35 @@ const Messages = ({ user, setCurrentPage }) => {
         }
     };
 
+    // ✅ ሁሉንም የተጠቃሚዎች ዝርዝር ማምጣት (ላኪዎችን ጨምሮ)
+    const fetchAllUsers = async () => {
+        if (!user?.id) return;
+        try {
+            const res = await fetch(`${BASE_URL}/api/users`);
+            if (res.ok) {
+                const data = await res.json();
+                // ራሱን ከዝርዝሩ አውጥቶ ሌሎችን ብቻ ማሳየት
+                const otherUsers = data.filter(u => String(u.id) !== String(user.id));
+                setAllUsers(otherUsers);
+                
+                // ✅ ራሱን ጨምሮ ሁሉም ሰው ላኪ እንዲሆን ማዘጋጀት
+                const allPossibleSenders = [user, ...otherUsers];
+                setSenders(allPossibleSenders);
+                setSenderId(user.id); // በነባሪነት አሁን ያለው ተጠቃሚ ላኪ ይሁን
+            }
+        } catch (err) {
+            console.error('❌ Error fetching all users:', err);
+        }
+    };
+
     useEffect(() => {
-        if (user?.id) fetchConversations();
+        if (user?.id) {
+            fetchConversations();
+            fetchAllUsers();
+        }
     }, [user?.id]);
 
+    // የተመረጠውን ሰው መልእክቶች ማምጣት
     useEffect(() => {
         const fetchMessages = async () => {
             if (!selectedUser || !user?.id) return;
@@ -71,12 +105,16 @@ const Messages = ({ user, setCurrentPage }) => {
         fetchMessages();
     }, [selectedUser, user?.id]);
 
+    // መልእክት መላክ
     const handleSendMessage = async (e) => {
         e.preventDefault();
         if (!newMessage.trim() || !selectedUser) return;
 
+        // ✅ የመረጥከውን ላኪ (Sender) ተጠቀም
+        const actualSenderId = senderId || user.id;
+
         const messageData = {
-            senderId: user.id,
+            senderId: actualSenderId,
             receiverId: selectedUser.other_user_id,
             message: newMessage
         };
@@ -84,7 +122,7 @@ const Messages = ({ user, setCurrentPage }) => {
         socket.current.emit('send-message', messageData);
 
         setMessages([...messages, {
-            sender_id: user.id,
+            sender_id: actualSenderId,
             message: newMessage,
             created_at: new Date()
         }]);
@@ -98,6 +136,18 @@ const Messages = ({ user, setCurrentPage }) => {
 
     const openChat = (conv) => {
         setSelectedUser(conv);
+        setShowSearch(false); 
+    };
+
+    const startNewChat = (usr) => {
+        const formattedUser = {
+            other_user_id: usr.id,
+            other_user_name: usr.name,
+            other_user_role: usr.role
+        };
+        setSelectedUser(formattedUser);
+        setShowSearch(false);
+        setSearchTerm('');
     };
 
     const toggleMinimize = () => {
@@ -232,7 +282,7 @@ const Messages = ({ user, setCurrentPage }) => {
         bubble: (isMine) => ({
             alignSelf: isMine ? 'flex-end' : 'flex-start',
             background: isMine ? '#2ecc71' : '#333',
-            color: '#fff',
+            color: isMine ? '#000' : '#fff',
             padding: '10px 15px',
             borderRadius: '18px',
             maxWidth: '70%',
@@ -255,7 +305,8 @@ const Messages = ({ user, setCurrentPage }) => {
             padding: '20px',
             display: 'flex',
             gap: '10px',
-            borderTop: '1px solid #2ecc71'
+            borderTop: '1px solid #2ecc71',
+            alignItems: 'center'
         },
         input: {
             flex: 1,
@@ -318,18 +369,11 @@ const Messages = ({ user, setCurrentPage }) => {
             <div style={styles.container}>
                 <div style={styles.header} onClick={toggleMinimize}>
                     <h3 style={styles.title}>💬 Messages</h3>
-                    <button 
-                        type="button"
-                        style={styles.minimizeBtn}
-                    >
-                        Maximize
-                    </button>
+                    <button type="button" style={styles.minimizeBtn}>Maximize</button>
                 </div>
                 <div style={styles.minimizedPreview}>
                     <span>📨 {conversations.length} conversations</span>
-                    {totalUnread > 0 && (
-                        <span style={styles.minimizedStats}>{totalUnread} unread messages</span>
-                    )}
+                    {totalUnread > 0 && <span style={styles.minimizedStats}>{totalUnread} unread messages</span>}
                 </div>
             </div>
         );
@@ -344,20 +388,8 @@ const Messages = ({ user, setCurrentPage }) => {
             <div style={styles.header}>
                 <h2 style={styles.title}>💬 Messages</h2>
                 <div style={{ display: 'flex', gap: '10px' }}>
-                    <button 
-                        type="button"
-                        style={styles.minimizeBtn} 
-                        onClick={toggleMinimize}
-                    >
-                        Minimize
-                    </button>
-                    <button 
-                        type="button"
-                        style={styles.closeBtn} 
-                        onClick={() => setCurrentPage('jobs')}
-                    >
-                        ✕ Close
-                    </button>
+                    <button type="button" style={styles.minimizeBtn} onClick={toggleMinimize}>Minimize</button>
+                    <button type="button" style={styles.closeBtn} onClick={() => setCurrentPage('jobs')}>✕ Close</button>
                 </div>
             </div>
 
@@ -365,24 +397,56 @@ const Messages = ({ user, setCurrentPage }) => {
                 <div style={styles.sidebar}>
                     <div style={styles.sidebarHeader} onClick={toggleSidebar}>
                         <span style={styles.sidebarTitle}>📋 Conversations</span>
-                        <button 
-                            type="button"
-                            style={styles.toggleBtn}
-                        >
+                        <button type="button" style={styles.toggleBtn}>
                             {isSidebarCollapsed ? '▶' : '◀'}
                         </button>
                     </div>
+
+                    {!isSidebarCollapsed && (
+                        <div style={{ padding: '10px', borderBottom: '1px solid #1a331a' }}>
+                            <button 
+                                type="button" 
+                                onClick={() => setShowSearch(!showSearch)}
+                                style={{ width: '100%', padding: '8px', background: '#2ecc71', color: '#000', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}
+                            >
+                                {showSearch ? '✕ Cancel' : '➕ New Chat'}
+                            </button>
+                            
+                            {showSearch && (
+                                <div style={{ marginTop: '10px' }}>
+                                    <input 
+                                        type="text" 
+                                        placeholder="Search people..." 
+                                        value={searchTerm}
+                                        onChange={(e) => setSearchTerm(e.target.value)}
+                                        style={{ width: '100%', padding: '8px', borderRadius: '5px', border: 'none', background: '#0a2a0a', color: '#fff' }}
+                                    />
+                                    <div style={{ maxHeight: '200px', overflowY: 'auto', marginTop: '5px', background: '#111', borderRadius: '5px' }}>
+                                        {allUsers.filter(u => u.name.toLowerCase().includes(searchTerm.toLowerCase())).map(usr => (
+                                            <div 
+                                                key={usr.id} 
+                                                onClick={() => startNewChat(usr)}
+                                                style={{ padding: '10px', cursor: 'pointer', borderBottom: '1px solid #333', color: '#fff' }}
+                                            >
+                                                <div style={{ fontWeight: 'bold' }}>{usr.name}</div>
+                                                <div style={{ fontSize: '0.7rem', color: '#aaa' }}>{usr.role}</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
                     
                     {conversations.length === 0 ? (
                         <div style={{ padding: '15px', textAlign: 'center', color: '#aaa' }}>
-                            No conversations yet.<br />
-                            Start messaging someone!
+                            No conversations yet.<br />Click "New Chat" to start!
                         </div>
                     ) : (
                         conversations.map((conv) => (
                             <div 
                                 key={conv.other_user_id} 
-                                style={styles.userItem(selectedUser?.other_user_id === conv.other_user_id)}
+                                style={styles.userItem(String(selectedUser?.other_user_id) === String(conv.other_user_id))}
                                 onClick={() => openChat(conv)}
                             >
                                 <div style={{ textAlign: isSidebarCollapsed ? 'center' : 'left' }}>
@@ -418,24 +482,39 @@ const Messages = ({ user, setCurrentPage }) => {
                                         <span>No messages yet. Start the conversation!</span>
                                     </div>
                                 ) : (
-                                    messages.map((m, i) => (
-                                        <div key={i} style={styles.bubble(m.sender_id === user.id)}>
-                                            <div style={styles.senderName}>
-                                                {m.sender_id === user.id ? '👤 You' : `👤 ${selectedUser?.other_user_name || 'User'}`}
+                                    messages.map((m, i) => {
+                                        // ✅ በመረጥከው ላኪ መሰረት የመልእክቱ ቀለም ይወሰናል
+                                        const isMine = String(m.sender_id) === String(senderId);
+                                        const msgSenderName = senders.find(u => String(u.id) === String(m.sender_id))?.name || 'User';
+                                        
+                                        return (
+                                            <div key={i} style={styles.bubble(isMine)}>
+                                                <div style={styles.senderName}>
+                                                    👤 {msgSenderName}
+                                                </div>
+                                                {m.message}
+                                                <div style={styles.time}>
+                                                    {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                </div>
                                             </div>
-                                            {m.message}
-                                            <div style={styles.time}>
-                                                {new Date(m.created_at).toLocaleTimeString([], { 
-                                                    hour: '2-digit', 
-                                                    minute: '2-digit' 
-                                                })}
-                                            </div>
-                                        </div>
-                                    ))
+                                        );
+                                    })
                                 )}
                                 <div ref={scrollRef} />
                             </div>
+                            
+                            {/* ✅ የመልእክት መላኪያ ቦታ - ላኪ መምረጫ ይዟል */}
                             <form style={styles.inputArea} onSubmit={handleSendMessage}>
+                                <select 
+                                    value={senderId} 
+                                    onChange={(e) => setSenderId(e.target.value)}
+                                    style={{ padding: '10px', borderRadius: '25px', border: '1px solid #2ecc71', background: '#000', color: '#fff', outline: 'none', maxWidth: '130px' }}
+                                >
+                                    {senders.map(s => (
+                                        <option key={s.id} value={s.id}>to: {s.name}</option>
+                                    ))}
+                                </select>
+
                                 <input 
                                     style={styles.input}
                                     value={newMessage}
@@ -448,7 +527,7 @@ const Messages = ({ user, setCurrentPage }) => {
                     ) : (
                         <div style={styles.emptyState}>
                             <span>👈</span>
-                            <span>Select a person from the left to start messaging...</span>
+                            <span>Select a person or click "New Chat" to start messaging...</span>
                         </div>
                     )}
                 </div>

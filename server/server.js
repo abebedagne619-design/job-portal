@@ -13,7 +13,7 @@ const morgan = require('morgan');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const messageRoutes = require('./routes/messages');
-const axios = require('axios'); // axios መጫኑን አረጋግጥ (npm install axios)
+const axios = require('axios');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -34,7 +34,7 @@ app.use(morgan('dev'));
 
 // CORS - የግድ ከRoutes በፊት መሆን አለበት
 app.use(cors({
-    origin: "http://localhost:5173", // አንዱን ብቻ መጠቀም ከተቻለ
+    origin: "http://localhost:5173",
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
 }));
@@ -53,9 +53,9 @@ app.use(session({
 
 app.use(passport.initialize());
 app.use(passport.session());
-app.use('/api/messages', messageRoutes); // ይሄ መስመር በላክኸው server.js ውስጥ የለም!
+app.use('/api/messages', messageRoutes);
 
-// ============= CACHE SYSTEM (አዲስ የተጨመረ) =============
+// ============= CACHE SYSTEM =============
 const cache = new Map();
 const CACHE_DURATION = 5 * 60 * 1000; // 5 ደቂቃ
 
@@ -84,22 +84,18 @@ function clearCache(pattern) {
     }
 }
 
-// ከ React የሚመጣውን የክህሎት ጥያቄ ተቀብሎ ወደ Python (5001) ያስተላልፋል
+// ============= RECOMMENDATIONS API =============
 app.post('/api/recommendations/skills', async (req, res) => {
     try {
-        // ከReact የሚመጣውን ዳታ መቀበል
         const { user_id, skills } = req.body;
 
         console.log(`📡 Processing recommendations for User: ${user_id}`);
 
-        // ለ Python ML ሰርቨር (Port 5001) ጥያቄ መላክ
-        // ማሳሰቢያ፡ Python ላይ አድራሻው '/recommend' መሆኑን አረጋግጥ
         const response = await axios.post('http://localhost:5001/recommend', {
             userId: user_id,
             skills: skills
         });
         
-        // ከፓይዘን የመጣውን ውጤት ለ React መመለስ
         res.json(response.data);
 
     } catch (error) {
@@ -111,13 +107,11 @@ app.post('/api/recommendations/skills', async (req, res) => {
     }
 });
 
-// ============= GET RECOMMENDATIONS (WITH CACHE - የተሻሻለ) =============
 app.get('/api/recommendations/skills/:userId', async (req, res) => {
     try {
         const userId = req.params.userId;
         const cacheKey = `rec_${userId}`;
         
-        // ✅ Cache ካለ ተጠቀም
         const cached = getCache(cacheKey);
         if (cached) {
             console.log(`⚡ Cache HIT for user ${userId}`);
@@ -126,7 +120,6 @@ app.get('/api/recommendations/skills/:userId', async (req, res) => {
         
         console.log(`🔄 Cache MISS for user ${userId} - fetching from ML`);
         
-        // 1. የተጠቃሚውን ክህሎቶች ከ user_skills table አምጣ
         let skills = [];
         try {
             const [skillRows] = await promisePool.query(
@@ -140,15 +133,13 @@ app.get('/api/recommendations/skills/:userId', async (req, res) => {
         
         console.log(`📡 GET Recommendations - User: ${userId}, Skills:`, skills);
         
-        // 2. ወደ Python ML ላክ
         const response = await axios.post('http://localhost:5001/recommend', {
             userId: parseInt(userId),
             skills: skills
         }, {
-            timeout: 60000  // 60 ሰከንድ ጠብቅ (ML ቀርፋፋ ስለሆነ)
+            timeout: 60000
         });
         
-        // ✅ Cache አስቀምጥ
         setCache(cacheKey, response.data);
         console.log(`✅ Cached ${response.data.length} recommendations for user ${userId}`);
         
@@ -163,7 +154,6 @@ app.get('/api/recommendations/skills/:userId', async (req, res) => {
     }
 });
 
-// ============= CLEAR CACHE (Admin - አዲስ የተጨመረ) =============
 app.post('/api/recommendations/clear-cache/:userId', async (req, res) => {
     try {
         const userId = req.params.userId;
@@ -214,8 +204,6 @@ const generateToken = (id) => {
 };
 
 // ============= AUTH ROUTES =============
-
-// Register
 app.post('/api/auth/register', async (req, res) => {
     try {
         const { name, email, password, role, phone, location } = req.body;
@@ -244,7 +232,6 @@ app.post('/api/auth/register', async (req, res) => {
     }
 });
 
-// Login
 app.post('/api/auth/login', async (req, res) => {
     try {
         const { email, password } = req.body;
@@ -273,7 +260,6 @@ app.post('/api/auth/login', async (req, res) => {
     }
 });
 
-// Get current user
 app.get('/api/auth/me', async (req, res) => {
     const token = req.headers.authorization?.split(' ')[1];
     
@@ -295,12 +281,11 @@ app.get('/api/auth/me', async (req, res) => {
     }
 });
 
-// ============= JOBS API (ተስተካክሎ የጸዳ) =============
+// ============= JOBS API =============
 app.get('/api/jobs', async (req, res) => {
     try {
         const { search } = req.query;
         
-        // አላስፈላጊ ክፍት ቦታዎችን ለማስቀረት ኩዌሪውን በአንድ መስመር እንጀምረዋለን
         let query = "SELECT j.*, u.name as employer_name FROM jobs j JOIN users u ON j.employer_id = u.id WHERE 1=1";
         let params = [];
         
@@ -311,7 +296,6 @@ app.get('/api/jobs', async (req, res) => {
         
         query += " ORDER BY j.created_at DESC";
         
-        // እዚህ ጋር 'promisePool' መጠቀሙን እርግጠኛ ሁኚ
         const [jobs] = await promisePool.query(query, params);
         res.json(jobs);
     } catch (err) {
@@ -320,7 +304,6 @@ app.get('/api/jobs', async (req, res) => {
     }
 });
 
-// Get single job (የጸዳ)
 app.get('/api/jobs/:id', async (req, res) => {
     try {
         const query = "SELECT j.*, u.name as employer_name, u.email as employer_email FROM jobs j JOIN users u ON j.employer_id = u.id WHERE j.id = ?";
@@ -337,7 +320,7 @@ app.get('/api/jobs/:id', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-// ============= CREATE JOB (POST) =============
+
 app.post('/api/jobs', async (req, res) => {
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) return res.status(401).json({ error: 'Unauthorized' });
@@ -346,16 +329,7 @@ app.post('/api/jobs', async (req, res) => {
         const decoded = jwt.verify(token, process.env.JWT_SECRET || 'jobportal_secret_key_2024');
         const employerId = decoded.id;
         
-        const { 
-            title, 
-            description, 
-            company, 
-            location, 
-            salary, 
-            type, 
-            requirements,
-            category 
-        } = req.body;
+        const { title, description, company, location, salary, type, requirements, category } = req.body;
         
         console.log(`📢 Creating job for employer ${employerId}:`, { title, company });
         
@@ -368,15 +342,8 @@ app.post('/api/jobs', async (req, res) => {
             (title, description, company, location, salary, type, requirements, category, employer_id, views_count, created_at) 
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NOW())`,
             [
-                title, 
-                description, 
-                company || null, 
-                location || null, 
-                salary || null, 
-                type || 'Full-time', 
-                requirements || null, 
-                category || null,
-                employerId
+                title, description, company || null, location || null, 
+                salary || null, type || 'Full-time', requirements || null, category || null, employerId
             ]
         );
         
@@ -396,7 +363,6 @@ app.post('/api/jobs', async (req, res) => {
     }
 });
 
-// ============= UPDATE JOB (PUT) =============
 app.put('/api/jobs/:id', async (req, res) => {
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) return res.status(401).json({ error: 'Unauthorized' });
@@ -407,7 +373,6 @@ app.put('/api/jobs/:id', async (req, res) => {
         
         const { title, description, company, location, salary, type } = req.body;
         
-        // የስራ ባለቤት መሆኑን አረጋግጥ
         const [jobs] = await promisePool.query(
             'SELECT id FROM jobs WHERE id = ? AND employer_id = ?',
             [req.params.id, employerId]
@@ -432,7 +397,6 @@ app.put('/api/jobs/:id', async (req, res) => {
     }
 });
 
-// ============= DELETE JOB =============
 app.delete('/api/jobs/:id', async (req, res) => {
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) return res.status(401).json({ error: 'Unauthorized' });
@@ -441,7 +405,6 @@ app.delete('/api/jobs/:id', async (req, res) => {
         const decoded = jwt.verify(token, process.env.JWT_SECRET || 'jobportal_secret_key_2024');
         const employerId = decoded.id;
         
-        // የስራ ባለቤት መሆኑን አረጋግጥ
         const [jobs] = await promisePool.query(
             'SELECT id FROM jobs WHERE id = ? AND employer_id = ?',
             [req.params.id, employerId]
@@ -460,6 +423,7 @@ app.delete('/api/jobs/:id', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+
 // ============= USERS API =============
 app.get('/api/users', async (req, res) => {
     try {
@@ -483,7 +447,7 @@ app.get('/api/users/:id', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-// ============= GET USER SKILLS =============
+
 app.get('/api/users/:userId/skills', async (req, res) => {
     try {
         const userId = req.params.userId;
@@ -534,7 +498,6 @@ app.get('/api/interviews/user/:id', async (req, res) => {
     }
 });
 
-
 // ============= ANALYTICS API =============
 app.post('/api/analytics/track-view', async (req, res) => {
     try {
@@ -583,12 +546,11 @@ app.post('/api/saved', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-// ይህን ኮድ በ server.js ውስጥ ጨምሪው
+
 app.get('/api/notifications/user/:userId', async (req, res) => {
     try {
         const userId = req.params.userId;
         
-        // ዳታቤዙ ውስጥ table-ኡ ባይኖር እንኳ እንዳይሰቀስቅ catch ውስጥ እናስገባዋለን
         const [notifications] = await promisePool.query(
             'SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC',
             [userId]
@@ -596,15 +558,12 @@ app.get('/api/notifications/user/:userId', async (req, res) => {
         
         res.json(notifications);
     } catch (err) {
-        // ሰንጠረዡ ከሌለ ወይም ሌላ ስህተት ቢፈጠር ባዶ ዝርዝር [] እንመልሳለን
         console.log('Notification table not found, returning empty array');
         res.json([]); 
     }
 });
-// ============= JOB ALERTS API =============
-// ማስታወሻ: ይህን ከ /api/notifications/user/:userId በኋላ ጨምር
 
-// 1. Create Job Alert
+// ============= JOB ALERTS API =============
 app.post('/api/alerts', async (req, res) => {
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) return res.status(401).json({ error: 'Unauthorized' });
@@ -616,7 +575,6 @@ app.post('/api/alerts', async (req, res) => {
         
         console.log(`📢 Creating alert for user ${userId}:`, { keyword, location, type });
         
-        // ሰንጠረዡ ከሌለ ፍጠር
         await promisePool.query(`
             CREATE TABLE IF NOT EXISTS job_alerts (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -648,7 +606,6 @@ app.post('/api/alerts', async (req, res) => {
     }
 });
 
-// 2. Get User Alerts
 app.get('/api/alerts', async (req, res) => {
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) return res.status(401).json({ error: 'Unauthorized' });
@@ -669,7 +626,6 @@ app.get('/api/alerts', async (req, res) => {
     }
 });
 
-// 3. Delete Alert
 app.delete('/api/alerts/:id', async (req, res) => {
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) return res.status(401).json({ error: 'Unauthorized' });
@@ -690,7 +646,6 @@ app.delete('/api/alerts/:id', async (req, res) => {
     }
 });
 
-// 4. Toggle Alert (Active/Inactive)
 app.put('/api/alerts/:id/toggle', async (req, res) => {
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) return res.status(401).json({ error: 'Unauthorized' });
@@ -761,7 +716,6 @@ app.get('/api/saved', async (req, res) => {
         const decoded = jwt.verify(token, process.env.JWT_SECRET || 'jobportal_secret_key_2024');
         const userId = decoded.id;
         
-        // Query-ውን በአንድ መስመር በማድረግ የማይታዩ ስህተቶችን አስወግደናል
         const sql = "SELECT sj.id AS saved_id, sj.saved_at, j.id, j.title, j.company, j.location, j.salary, j.type FROM saved_jobs sj LEFT JOIN jobs j ON sj.job_id = j.id WHERE sj.user_id = ? ORDER BY sj.saved_at DESC";
         
         const [savedJobs] = await promisePool.query(sql, [userId]);
@@ -802,7 +756,7 @@ app.get('/api/test', async (req, res) => {
         res.json({ message: 'Backend is working!', db: 'error', error: err.message });
     }
 });
-// ሁሉንም የሥራ ማመልከቻዎች (Applications) ለAdmin ለማምጣት
+
 app.get('/api/applications', async (req, res) => {
     try {
         const [applications] = await promisePool.query(`
@@ -827,10 +781,9 @@ app.get('/api/applications', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-// 1. Jobs by Type (የነበረውን አስተካክለነዋል)
+
 app.get('/api/analytics/jobs-by-type', async (req, res) => {
     try {
-        // እዚህ ጋር 'db' ሳይሆን 'promisePool' ነው መሆን ያለበት
         const [rows] = await promisePool.query('SELECT type, COUNT(*) as count FROM jobs GROUP BY type');
         res.json(rows);
     } catch (err) {
@@ -838,7 +791,7 @@ app.get('/api/analytics/jobs-by-type', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-// 2. Popular Jobs (ይህ አልነበረም - አሁን ተጨምሯል)
+
 app.get('/api/analytics/popular-jobs', async (req, res) => {
     try {
         const [rows] = await promisePool.query(`
@@ -853,7 +806,7 @@ app.get('/api/analytics/popular-jobs', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-// 3. Applications Timeline (ይህ አልነበረም - አሁን ተጨምሯል)
+
 app.get('/api/analytics/applications-timeline', async (req, res) => {
     try {
         const [rows] = await promisePool.query(`
@@ -869,7 +822,7 @@ app.get('/api/analytics/applications-timeline', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-// አሠሪው ለእሱ የተለጠፉ ስራዎች ላይ የመጡ ማመልከቻዎችን ለማየት
+
 app.get('/api/applications/employer/:employerId', async (req, res) => {
     try {
         const employerId = req.params.employerId;
@@ -889,7 +842,7 @@ app.get('/api/applications/employer/:employerId', async (req, res) => {
         `, [employerId]);
 
         if (applications.length === 0) {
-            return res.status(200).json([]); // ባዶ ከሆነ ባዶ array ይላካል
+            return res.status(200).json([]); 
         }
 
         res.json(applications);
@@ -898,7 +851,7 @@ app.get('/api/applications/employer/:employerId', async (req, res) => {
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
-// ============= UPDATE APPLICATION STATUS =============
+
 app.put('/api/applications/:id/status', async (req, res) => {
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) return res.status(401).json({ error: 'Unauthorized' });
@@ -941,7 +894,6 @@ app.put('/api/applications/:id/status', async (req, res) => {
     }
 });
 
-// ============= DELETE APPLICATION =============
 app.delete('/api/applications/:id', async (req, res) => {
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) return res.status(401).json({ error: 'Unauthorized' });
@@ -972,16 +924,16 @@ app.delete('/api/applications/:id', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-// ============= SOCKET.IO =============
+
+// ============= SOCKET.IO (✅ የተስተካከለው የመልእክት ስርዓት) =============
 const server = http.createServer(app);
 const io = socketIo(server, {
     cors: { 
-        // 127.0.0.1 መጨመር ለ Vite ተጠቃሚዎች በጣም አስፈላጊ ነው
         origin: ["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000"], 
         methods: ['GET', 'POST'], 
         credentials: true 
     },
-    pingTimeout: 60000, // ግንኙነቱ ቶሎ እንዳይቋረጥ ይረዳል
+    pingTimeout: 60000,
     pingInterval: 25000
 });
 
@@ -992,9 +944,10 @@ io.on('connection', (socket) => {
     
     socket.on('user-connected', (userId) => {
         if (userId) {
+            socket.join(String(userId)); // ✅ ተጠቃሚው የራሱ የሆነ Room ይገባል
             onlineUsers.set(String(userId), socket.id);
             io.emit('online-users', Array.from(onlineUsers.keys()));
-            console.log(`✅ User ${userId} is online`);
+            console.log(`✅ User ${userId} is online (Room Joined)`);
         }
     });
     
@@ -1006,35 +959,32 @@ io.on('connection', (socket) => {
                 [senderId, receiverId, message]
             );
             
-            const receiverSocketId = onlineUsers.get(String(receiverId));
-            if (receiverSocketId) {
-                io.to(receiverSocketId).emit('new-message', { 
-                    id: result.insertId, 
-                    senderId, 
-                    message, 
-                    createdAt: new Date() 
-                });
-            }
+            const messagePayload = { 
+                id: result.insertId, 
+                senderId, 
+                receiverId,
+                message, 
+                createdAt: new Date() 
+            };
+            
+            // ✅ መልእክቱን ወደ ሁለቱም ተጠቃሚዎች Room መላክ (ሁሉም Tab እንዲያየው)
+            io.to(String(receiverId)).emit('new-message', messagePayload);
+            io.to(String(senderId)).emit('new-message', messagePayload);
             
             const [unreadResult] = await promisePool.query(
                 'SELECT COUNT(*) as count FROM messages WHERE receiver_id = ? AND is_read = false',
                 [receiverId]
             );
-            // ያልተነበቡ መልእክቶችን ለተቀባዩ ብቻ መላክ
-            if (receiverSocketId) {
-                io.to(receiverSocketId).emit('unread-update', { userId: receiverId, count: unreadResult[0].count });
-            }
+            
+            io.to(String(receiverId)).emit('unread-update', { userId: receiverId, count: unreadResult[0].count });
+            
         } catch (err) {
             console.error('Send message error:', err);
         }
     });
 
-    // የ Typing ኮድ እዚህ ጋር አንድ ጊዜ ብቻ ይበቃል
     socket.on('typing', ({ senderId, receiverId }) => {
-        const receiverSocketId = onlineUsers.get(String(receiverId));
-        if (receiverSocketId) {
-            io.to(receiverSocketId).emit('user-typing', { userId: senderId });
-        }
+        io.to(String(receiverId)).emit('user-typing', { userId: senderId });
     });
     
     socket.on('disconnect', () => {
@@ -1048,6 +998,7 @@ io.on('connection', (socket) => {
         io.emit('online-users', Array.from(onlineUsers.keys()));
     });
 });
+
 // ============= OAUTH =============
 passport.serializeUser((user, done) => done(null, user.id));
 passport.deserializeUser(async (id, done) => {
@@ -1081,18 +1032,10 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
     app.get('/auth/google/callback', 
     passport.authenticate('google', { failureRedirect: '/login' }), 
     (req, res) => {
-        // ለጎግል ተጠቃሚው JWT ቶከን እንፈጥራለን
         const token = generateToken(req.user.id);
-
-        // ፓስወርድ ካለ ከዳታው ውስጥ እናስወጣለን
         const { password, ...userWithoutPassword } = req.user;
-
-        // ቶከኑን እና ተጠቃሚውን በአንድ ላይ ወደ React እንልካለን
         const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
-        
-        // encodeURIComponent መጠቀም ዳታው በURL ላይ እንዳይበላሽ ይረዳል
         const redirectUrl = `${clientUrl}/auth-success?token=${token}&user=${encodeURIComponent(JSON.stringify(userWithoutPassword))}`;
-        
         res.redirect(redirectUrl);
     }
 );

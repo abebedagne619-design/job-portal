@@ -399,22 +399,25 @@ const Chat = ({ user, otherUser, onClose }) => {
                         No messages yet. Start the conversation!
                     </div>
                 ) : (
-                    messages.map((msg, idx) => (
-                        <div key={idx} style={getMessageStyle(msg)}>
-                            <div style={styles.senderName}>
-                                {msg.sender_id === user.id ? '👤 You' : `👤 ${otherUser?.name || 'User'}`}
-                            </div>
-                            <div>{msg.message}</div>
-                            <div style={styles.time}>
-                                {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                {msg.sender_id === user.id && (
-                                    <span style={{ marginLeft: '5px' }}>
-                                        {msg.is_read ? '✓✓' : '✓'}
-                                    </span>
-                                )}
-                            </div>
-                        </div>
-                    ))
+                  messages.map((msg, idx) => {
+    const isMine = String(msg.sender_id) === String(user.id);
+    return (
+        <div key={idx} style={getMessageStyle(msg)}>
+            <div style={styles.senderName}>
+                {isMine ? '👤 You' : `👤 ${otherUser?.name || 'User'}`}
+            </div>
+            <div>{msg.message}</div>
+            <div style={styles.time}>
+                {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                {isMine && (
+                    <span style={{ marginLeft: '5px' }}>
+                        {msg.is_read ? '✓✓' : '✓'}
+                    </span>
+                )}
+            </div>
+        </div>
+    );
+})
                 )}
                 {isTyping && <div style={styles.typing}>✍️ Typing...</div>}
                 <div ref={messagesEndRef} />
