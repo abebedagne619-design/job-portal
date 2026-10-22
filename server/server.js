@@ -925,7 +925,7 @@ app.delete('/api/applications/:id', async (req, res) => {
     }
 });
 
-// ============= SOCKET.IO (✅ የተስተካከለው የመልእክት ስርዓት) =============
+// ============= SOCKET.IO =============
 const server = http.createServer(app);
 const io = socketIo(server, {
     cors: { 

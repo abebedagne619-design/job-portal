@@ -17,23 +17,41 @@ const Messages = ({ user, setCurrentPage }) => {
     const [senders, setSenders] = useState([]);
     const [senderId, setSenderId] = useState('');
 
-    const socket = useRef();
+    const socket = useRef(null);
+    const selectedUserRef = useRef(null);
     const scrollRef = useRef();
     const BASE_URL = 'http://localhost:5000';
     const API_URL = `${BASE_URL}/api/messages`;
 
-    // Socket.io ግንኙነት
+    // ✅ selectedUser ሲቀየር ለ Socket ማሳወቅ (Socket እንዳይዘጋ)
     useEffect(() => {
+        selectedUserRef.current = selectedUser;
+    }, [selectedUser]);
+
+    // 1. Socket.io ግንኙነት (አንድ ጊዜ ብቻ ይፈጠራል)
+    useEffect(() => {
+        if (!user?.id) return;
+
         socket.current = io('http://localhost:5000');
         
+        socket.current.emit('user-connected', user.id);
+        
         const handleNewMessage = (data) => {
-            if (String(selectedUser?.other_user_id) === String(data.senderId)) {
-                setMessages((prev) => [...prev, {
-                    id: data.id,
-                    sender_id: data.senderId,
-                    message: data.message,
-                    created_at: data.createdAt
-                }]);
+            const currentSelected = selectedUserRef.current;
+            
+            // ✅ መልእክቱ ከከፈትከው ሰው ጋር የሚዛመድ ከሆነ ብቻ አሳይ
+            if (currentSelected && (String(currentSelected.other_user_id) === String(data.senderId) || String(currentSelected.other_user_id) === String(data.receiverId))) {
+                setMessages((prev) => {
+                    if (prev.some(m => m.id === data.id)) return prev;
+                    
+                    const withoutTemp = prev.filter(m => !String(m.id).startsWith('temp-'));
+                    return [...withoutTemp, {
+                        id: data.id,
+                        sender_id: data.senderId,
+                        message: data.message,
+                        created_at: data.createdAt
+                    }];
+                });
             }
             fetchConversations();
         };
@@ -44,7 +62,7 @@ const Messages = ({ user, setCurrentPage }) => {
             socket.current.off('new-message', handleNewMessage);
             socket.current.disconnect();
         };
-    }, [user?.id, selectedUser?.other_user_id]);
+    }, [user?.id]);
 
     const fetchConversations = async () => {
         if (!user?.id) return;
@@ -59,21 +77,18 @@ const Messages = ({ user, setCurrentPage }) => {
         }
     };
 
-    // ✅ ሁሉንም የተጠቃሚዎች ዝርዝር ማምጣት (ላኪዎችን ጨምሮ)
     const fetchAllUsers = async () => {
         if (!user?.id) return;
         try {
             const res = await fetch(`${BASE_URL}/api/users`);
             if (res.ok) {
                 const data = await res.json();
-                // ራሱን ከዝርዝሩ አውጥቶ ሌሎችን ብቻ ማሳየት
                 const otherUsers = data.filter(u => String(u.id) !== String(user.id));
                 setAllUsers(otherUsers);
                 
-                // ✅ ራሱን ጨምሮ ሁሉም ሰው ላኪ እንዲሆን ማዘጋጀት
                 const allPossibleSenders = [user, ...otherUsers];
                 setSenders(allPossibleSenders);
-                setSenderId(user.id); // በነባሪነት አሁን ያለው ተጠቃሚ ላኪ ይሁን
+                setSenderId(user.id);
             }
         } catch (err) {
             console.error('❌ Error fetching all users:', err);
@@ -110,7 +125,6 @@ const Messages = ({ user, setCurrentPage }) => {
         e.preventDefault();
         if (!newMessage.trim() || !selectedUser) return;
 
-        // ✅ የመረጥከውን ላኪ (Sender) ተጠቀም
         const actualSenderId = senderId || user.id;
 
         const messageData = {
@@ -121,7 +135,9 @@ const Messages = ({ user, setCurrentPage }) => {
 
         socket.current.emit('send-message', messageData);
 
-        setMessages([...messages, {
+        const tempId = `temp-${Date.now()}`;
+        setMessages(prev => [...prev, {
+            id: tempId,
             sender_id: actualSenderId,
             message: newMessage,
             created_at: new Date()
@@ -150,221 +166,40 @@ const Messages = ({ user, setCurrentPage }) => {
         setSearchTerm('');
     };
 
-    const toggleMinimize = () => {
-        setIsMinimized(!isMinimized);
-    };
-
-    const toggleSidebar = () => {
-        setIsSidebarCollapsed(!isSidebarCollapsed);
-    };
+    const toggleMinimize = () => setIsMinimized(!isMinimized);
+    const toggleSidebar = () => setIsSidebarCollapsed(!isSidebarCollapsed);
 
     const styles = {
-        container: {
-            padding: isMinimized ? '0' : '20px',
-            height: isMinimized ? 'auto' : 'calc(100vh - 20px)',
-            transition: 'all 0.3s ease'
-        },
-        header: {
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            marginBottom: isMinimized ? '0' : '15px',
-            padding: isMinimized ? '10px 15px' : '0',
-            background: isMinimized ? '#0a2a0a' : 'transparent',
-            borderRadius: isMinimized ? '10px' : '0',
-            cursor: isMinimized ? 'pointer' : 'default'
-        },
-        title: {
-            color: '#2ecc71',
-            margin: 0,
-            fontSize: isMinimized ? '1rem' : '1.8rem'
-        },
-        minimizeBtn: {
-            padding: '5px 12px',
-            background: '#2ecc71',
-            color: '#000',
-            border: 'none',
-            borderRadius: '8px',
-            cursor: 'pointer',
-            fontWeight: 'bold',
-            fontSize: isMinimized ? '0.8rem' : '1rem'
-        },
-        chatContainer: {
-            display: isMinimized ? 'none' : 'flex',
-            height: '80vh',
-            background: '#0a1a0a',
-            color: '#fff',
-            borderRadius: '15px',
-            overflow: 'hidden',
-            border: '1px solid #2ecc71'
-        },
-        sidebar: {
-            width: isSidebarCollapsed ? '60px' : '30%',
-            minWidth: isSidebarCollapsed ? '60px' : '250px',
-            borderRight: '1px solid #2ecc71',
-            overflowY: 'auto',
-            background: 'rgba(20,40,20,0.8)',
-            transition: 'width 0.3s ease'
-        },
-        sidebarHeader: {
-            padding: isSidebarCollapsed ? '15px 10px' : '15px',
-            borderBottom: '1px solid #2ecc71',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            cursor: 'pointer'
-        },
-        sidebarTitle: {
-            display: isSidebarCollapsed ? 'none' : 'block',
-            fontWeight: 'bold',
-            color: '#2ecc71'
-        },
-        toggleBtn: {
-            background: 'transparent',
-            border: 'none',
-            color: '#2ecc71',
-            cursor: 'pointer',
-            fontSize: '1.2rem'
-        },
-        userItem: (isSelected) => ({
-            padding: isSidebarCollapsed ? '15px 10px' : '15px',
-            cursor: 'pointer',
-            borderBottom: '1px solid #1a331a',
-            background: isSelected ? '#2ecc7133' : 'transparent',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            textAlign: isSidebarCollapsed ? 'center' : 'left',
-            flexDirection: isSidebarCollapsed ? 'column' : 'row',
-            gap: isSidebarCollapsed ? '5px' : '0'
-        }),
-        userName: {
-            fontWeight: 'bold',
-            fontSize: isSidebarCollapsed ? '0.7rem' : '1rem',
-            wordBreak: 'break-word'
-        },
-        lastMessage: {
-            fontSize: '0.7rem',
-            color: '#aaa',
-            display: isSidebarCollapsed ? 'none' : 'block',
-            marginTop: '3px'
-        },
-        unreadBadge: {
-            background: '#e74c3c',
-            color: '#fff',
-            padding: isSidebarCollapsed ? '2px 4px' : '2px 8px',
-            borderRadius: '50%',
-            fontSize: isSidebarCollapsed ? '0.6rem' : '0.7rem',
-            minWidth: '18px',
-            textAlign: 'center'
-        },
-        chatWindow: {
-            width: isSidebarCollapsed ? 'calc(100% - 60px)' : '70%',
-            display: 'flex',
-            flexDirection: 'column',
-            background: 'rgba(10,20,10,0.9)',
-            transition: 'width 0.3s ease'
-        },
-        chatHeader: {
-            padding: '15px',
-            borderBottom: '1px solid #2ecc71',
-            fontWeight: 'bold',
-            background: 'rgba(0,0,0,0.3)'
-        },
-        messageBox: {
-            flex: 1,
-            padding: '20px',
-            overflowY: 'auto',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '10px'
-        },
-        bubble: (isMine) => ({
-            alignSelf: isMine ? 'flex-end' : 'flex-start',
-            background: isMine ? '#2ecc71' : '#333',
-            color: isMine ? '#000' : '#fff',
-            padding: '10px 15px',
-            borderRadius: '18px',
-            maxWidth: '70%',
-            wordWrap: 'break-word'
-        }),
-        senderName: {
-            fontSize: '0.7rem',
-            fontWeight: 'bold',
-            opacity: 0.8,
-            marginBottom: '3px',
-            color: 'inherit'
-        },
-        time: {
-            fontSize: '0.6rem',
-            marginTop: '5px',
-            opacity: 0.7,
-            textAlign: 'right'
-        },
-        inputArea: {
-            padding: '20px',
-            display: 'flex',
-            gap: '10px',
-            borderTop: '1px solid #2ecc71',
-            alignItems: 'center'
-        },
-        input: {
-            flex: 1,
-            padding: '10px',
-            borderRadius: '25px',
-            border: '1px solid #2ecc71',
-            background: '#000',
-            color: '#fff',
-            outline: 'none'
-        },
-        sendBtn: {
-            padding: '10px 20px',
-            background: '#2ecc71',
-            border: 'none',
-            borderRadius: '25px',
-            color: '#000',
-            cursor: 'pointer',
-            fontWeight: 'bold'
-        },
-        closeBtn: {
-            padding: '8px 15px',
-            background: '#e74c3c',
-            color: '#fff',
-            border: 'none',
-            borderRadius: '8px',
-            cursor: 'pointer',
-            fontWeight: 'bold',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '5px'
-        },
-        minimizedPreview: {
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '10px 15px',
-            background: '#0a2a0a',
-            borderRadius: '10px',
-            color: '#fff'
-        },
-        minimizedStats: {
-            fontSize: '0.8rem',
-            color: '#aaa'
-        },
-        emptyState: {
-            flex: 1,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: '#666',
-            flexDirection: 'column',
-            gap: '10px'
-        }
+        container: { padding: isMinimized ? '0' : '20px', height: isMinimized ? 'auto' : 'calc(100vh - 20px)', transition: 'all 0.3s ease' },
+        header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: isMinimized ? '0' : '15px', padding: isMinimized ? '10px 15px' : '0', background: isMinimized ? '#0a2a0a' : 'transparent', borderRadius: isMinimized ? '10px' : '0', cursor: isMinimized ? 'pointer' : 'default' },
+        title: { color: '#2ecc71', margin: 0, fontSize: isMinimized ? '1rem' : '1.8rem' },
+        minimizeBtn: { padding: '5px 12px', background: '#2ecc71', color: '#000', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: isMinimized ? '0.8rem' : '1rem' },
+        chatContainer: { display: isMinimized ? 'none' : 'flex', height: '80vh', background: '#0a1a0a', color: '#fff', borderRadius: '15px', overflow: 'hidden', border: '1px solid #2ecc71' },
+        sidebar: { width: isSidebarCollapsed ? '60px' : '30%', minWidth: isSidebarCollapsed ? '60px' : '250px', borderRight: '1px solid #2ecc71', overflowY: 'auto', background: 'rgba(20,40,20,0.8)', transition: 'width 0.3s ease' },
+        sidebarHeader: { padding: isSidebarCollapsed ? '15px 10px' : '15px', borderBottom: '1px solid #2ecc71', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' },
+        sidebarTitle: { display: isSidebarCollapsed ? 'none' : 'block', fontWeight: 'bold', color: '#2ecc71' },
+        toggleBtn: { background: 'transparent', border: 'none', color: '#2ecc71', cursor: 'pointer', fontSize: '1.2rem' },
+        userItem: (isSelected) => ({ padding: isSidebarCollapsed ? '15px 10px' : '15px', cursor: 'pointer', borderBottom: '1px solid #1a331a', background: isSelected ? '#2ecc7133' : 'transparent', display: 'flex', justifyContent: 'space-between', alignItems: 'center', textAlign: isSidebarCollapsed ? 'center' : 'left', flexDirection: isSidebarCollapsed ? 'column' : 'row', gap: isSidebarCollapsed ? '5px' : '0' }),
+        userName: { fontWeight: 'bold', fontSize: isSidebarCollapsed ? '0.7rem' : '1rem', wordBreak: 'break-word' },
+        lastMessage: { fontSize: '0.7rem', color: '#aaa', display: isSidebarCollapsed ? 'none' : 'block', marginTop: '3px' },
+        unreadBadge: { background: '#e74c3c', color: '#fff', padding: isSidebarCollapsed ? '2px 4px' : '2px 8px', borderRadius: '50%', fontSize: isSidebarCollapsed ? '0.6rem' : '0.7rem', minWidth: '18px', textAlign: 'center' },
+        chatWindow: { width: isSidebarCollapsed ? 'calc(100% - 60px)' : '70%', display: 'flex', flexDirection: 'column', background: 'rgba(10,20,10,0.9)', transition: 'width 0.3s ease' },
+        chatHeader: { padding: '15px', borderBottom: '1px solid #2ecc71', fontWeight: 'bold', background: 'rgba(0,0,0,0.3)' },
+        messageBox: { flex: 1, padding: '20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '10px' },
+        bubble: (isMine) => ({ alignSelf: isMine ? 'flex-end' : 'flex-start', background: isMine ? '#2ecc71' : '#333', color: isMine ? '#000' : '#fff', padding: '10px 15px', borderRadius: '18px', maxWidth: '70%', wordWrap: 'break-word' }),
+        senderName: { fontSize: '0.7rem', fontWeight: 'bold', opacity: 0.8, marginBottom: '3px', color: 'inherit' },
+        time: { fontSize: '0.6rem', marginTop: '5px', opacity: 0.7, textAlign: 'right' },
+        inputArea: { padding: '20px', display: 'flex', gap: '10px', borderTop: '1px solid #2ecc71', alignItems: 'center' },
+        input: { flex: 1, padding: '10px', borderRadius: '25px', border: '1px solid #2ecc71', background: '#000', color: '#fff', outline: 'none' },
+        sendBtn: { padding: '10px 20px', background: '#2ecc71', border: 'none', borderRadius: '25px', color: '#000', cursor: 'pointer', fontWeight: 'bold' },
+        closeBtn: { padding: '8px 15px', background: '#e74c3c', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px' },
+        minimizedPreview: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 15px', background: '#0a2a0a', borderRadius: '10px', color: '#fff' },
+        minimizedStats: { fontSize: '0.8rem', color: '#aaa' },
+        emptyState: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666', flexDirection: 'column', gap: '10px' }
     };
 
     if (isMinimized) {
         const totalUnread = conversations.reduce((sum, conv) => sum + (conv.unread_count || 0), 0);
-        
         return (
             <div style={styles.container}>
                 <div style={styles.header} onClick={toggleMinimize}>
@@ -483,7 +318,6 @@ const Messages = ({ user, setCurrentPage }) => {
                                     </div>
                                 ) : (
                                     messages.map((m, i) => {
-                                        // ✅ በመረጥከው ላኪ መሰረት የመልእክቱ ቀለም ይወሰናል
                                         const isMine = String(m.sender_id) === String(senderId);
                                         const msgSenderName = senders.find(u => String(u.id) === String(m.sender_id))?.name || 'User';
                                         
@@ -503,7 +337,6 @@ const Messages = ({ user, setCurrentPage }) => {
                                 <div ref={scrollRef} />
                             </div>
                             
-                            {/* ✅ የመልእክት መላኪያ ቦታ - ላኪ መምረጫ ይዟል */}
                             <form style={styles.inputArea} onSubmit={handleSendMessage}>
                                 <select 
                                     value={senderId} 
@@ -511,7 +344,7 @@ const Messages = ({ user, setCurrentPage }) => {
                                     style={{ padding: '10px', borderRadius: '25px', border: '1px solid #2ecc71', background: '#000', color: '#fff', outline: 'none', maxWidth: '130px' }}
                                 >
                                     {senders.map(s => (
-                                        <option key={s.id} value={s.id}>to: {s.name}</option>
+                                        <option key={s.id} value={s.id}>From: {s.name}</option>
                                     ))}
                                 </select>
 
