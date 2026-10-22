@@ -14,6 +14,8 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const messageRoutes = require('./routes/messages');
 const axios = require('axios');
+const multer = require('multer');
+const pdfParse = require('pdf-parse');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -107,6 +109,7 @@ app.post('/api/recommendations/skills', async (req, res) => {
     }
 });
 
+// ============= GET RECOMMENDATIONS (BY SKILLS) =============
 app.get('/api/recommendations/skills/:userId', async (req, res) => {
     try {
         const userId = req.params.userId;
@@ -154,6 +157,45 @@ app.get('/api/recommendations/skills/:userId', async (req, res) => {
     }
 });
 
+// ============= RECOMMENDATIONS (BY CV UPLOAD) =============
+// ፋይሉን በ Memory ውስጥ ብቻ እንይዘው (Disk ላይ አናስቀምጥም)
+const upload = multer({ storage: multer.memoryStorage() });
+
+app.post('/api/recommendations/cv', upload.single('cv'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No CV file uploaded' });
+        }
+
+        const userId = req.body.userId;
+        console.log(`📄 Received CV from User: ${userId}`);
+
+        // 1. PDF ን ወደ ጽሁፍ መቀየር
+        const pdfData = await pdfParse(req.file.buffer);
+        const cvText = pdfData.text;
+
+        if (!cvText) {
+            return res.status(400).json({ error: 'Could not extract text from PDF' });
+        }
+
+        // 2. ወደ Python ML መላክ
+        const response = await axios.post('http://localhost:5001/recommend-cv', {
+            userId: parseInt(userId),
+            cvText: cvText
+        }, {
+            timeout: 60000
+        });
+
+        res.json(response.data);
+
+    } catch (error) {
+        console.error("❌ CV Processing Error:", error.message);
+        res.status(500).json({ 
+            error: "Failed to process CV",
+            details: error.message 
+        });
+    }
+});
 app.post('/api/recommendations/clear-cache/:userId', async (req, res) => {
     try {
         const userId = req.params.userId;
