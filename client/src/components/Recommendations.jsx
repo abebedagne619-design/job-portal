@@ -6,6 +6,8 @@ const Recommendations = ({ user }) => {
     const [skills, setSkills] = useState('');
     const [editingSkills, setEditingSkills] = useState(false);
     const [savingSkills, setSavingSkills] = useState(false);
+    const [cvFile, setCvFile] = useState(null);
+    const [uploadingCv, setUploadingCv] = useState(false);
 
     useEffect(() => {
         // user መኖሩን እና id እንዳለው ቀድሞ ማረጋገጥ (TypeError ለመከላከል)
@@ -49,6 +51,39 @@ const Recommendations = ({ user }) => {
         setLoading(false);
     }
 };
+
+    const uploadCV = async () => {
+        if (!cvFile || !user?.id) {
+            alert("እባክህ መጀመሪያ የ PDF ፋይል ምረጥ!");
+            return;
+        }
+
+        setUploadingCv(true);
+        const formData = new FormData();
+        formData.append('cv', cvFile);
+        formData.append('userId', user.id);
+
+        try {
+            const res = await fetch('http://localhost:5000/api/recommendations/cv', {
+                method: 'POST',
+                body: formData
+            });
+            
+            if (res.ok) {
+                const data = await res.json();
+                setRecommendations(data);
+                alert("CV በተሳካ ሁኔታ ተነቧል! አዲስ ስራዎች ተገኝተዋል።");
+            } else {
+                const err = await res.json();
+                alert(`ስህተት: ${err.error}`);
+            }
+        } catch (err) {
+            console.error(err);
+            alert("CV መጫን አልተቻለም።");
+        } finally {
+            setUploadingCv(false);
+        }
+    };
 
     // 2. ችሎታዎችን ከ Node.js (5000) ማምጣት
    const fetchSkills = async () => {
@@ -150,6 +185,24 @@ const Recommendations = ({ user }) => {
                 >
                     {savingSkills ? 'በመመዝገብ ላይ...' : (editingSkills ? 'ለውጦችን መዝግብ' : 'ክህሎቶችን አስተካክል')}
                 </button>
+
+                {/* ✅ አዲሱ የ CV መጫኛ ክፍል ከ Skills ቁልፍ ልክ በታች ተጨምሯል */}
+                <div style={{ marginTop: '20px', borderTop: '1px solid #2ecc71', paddingTop: '20px' }}>
+                    <h4 style={{ color: '#2ecc71', marginBottom: '10px' }}>ወይም CV (PDF) ጫን</h4>
+                    <input 
+                        type="file" 
+                        accept=".pdf"
+                        onChange={(e) => setCvFile(e.target.files[0])}
+                        style={{ display: 'block', margin: '0 auto 10px', color: '#fff' }}
+                    />
+                    <button 
+                        onClick={uploadCV} 
+                        disabled={uploadingCv || !cvFile}
+                        style={{ ...styles.editBtn, background: uploadingCv ? '#555' : '#3498db' }}
+                    >
+                        {uploadingCv ? 'በማንበብ ላይ...' : '📄 CV አስገባና አመሳስል'}
+                    </button>
+                </div>
             </div>
 
             <div style={styles.grid}>

@@ -58,7 +58,8 @@ def get_all_jobs():
         return []
     
     cursor = conn.cursor(dictionary=True)
-    cursor.execute('SELECT id, title, description, company, location, type, salary FROM jobs')
+    # ✅ requirements የሚለው ኮለም እዚህ ተጨምሯል
+    cursor.execute('SELECT id, title, description, company, location, type, salary, requirements FROM jobs')
     jobs = cursor.fetchall()
     cursor.close()
     conn.close()
@@ -246,6 +247,76 @@ def recommend():
         logger.error(f"Error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/recommend-cv', methods=['POST'])
+def recommend_cv():
+    """Get job recommendations based on CV text extraction"""
+    data = request.json
+    user_id = data.get('userId')
+    cv_text = data.get('cvText')
+
+    if not user_id or not cv_text:
+        return jsonify({'error': 'User ID and CV Text required'}), 400
+
+    print("\n" + "="*60)
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 📄 CV RECOMMENDATION REQUESTED")
+    print("="*60)
+    print(f"👤 User ID: {user_id}")
+    print(f"📝 CV Length: {len(cv_text)} characters")
+
+    jobs = get_all_jobs()
+    if not jobs:
+        return jsonify([])
+
+    # 1. የስራዎቹን ጽሁፍ ማዘጋጀት
+    job_texts = []
+    for job in jobs:
+        reqs = job.get('requirements', '') or ''
+        text = f"{str(job['title'] or '')} {str(job['description'] or '')} {reqs} {str(job['company'] or '')}"
+        job_texts.append(text.lower())
+
+    # 2. የCV ጽሁፍን ማጽዳት (Clean text)
+    import re
+    cv_text_clean = re.sub(r'[^a-zA-Z0-9\s]', '', cv_text.lower())
+
+    all_texts = [cv_text_clean] + job_texts
+
+    try:
+        vectorizer = TfidfVectorizer(stop_words='english', max_features=5000)
+        tfidf_matrix = vectorizer.fit_transform(all_texts)
+        
+        # 3. Cosine Similarity ማስላት
+        similarity_scores = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:]).flatten()
+        
+        candidates = []
+        for idx, score in enumerate(similarity_scores):
+            job = jobs[idx]
+            # ✅ ውጤቱን በ 0-1 መካከል እንይዘው (React ላይ 100 ያባዛል)
+            final_score = float(score)
+            
+            if final_score > 0.01:  # ቢያንስ 1% ካለው ብቻ አሳይ
+                candidates.append({
+                    'id': job['id'],
+                    'title': job['title'],
+                    'company': job['company'],
+                    'location': job['location'],
+                    'type': job['type'],
+                    'salary': job['salary'],
+                    'similarity_score': final_score 
+                })
+        
+        # በከፍተኛ ውጤት መደርደር
+        recommendations = sorted(candidates, key=lambda x: x['similarity_score'], reverse=True)
+        
+        top_score = round(recommendations[0]['similarity_score'] * 100, 2) if recommendations else 0
+        print(f"✅ Found {len(recommendations)} matches. Top score: {top_score}%")
+        print("="*60 + "\n")
+        
+        return jsonify(recommendations[:10])
+        
+    except Exception as e:
+        logger.error(f"Error in CV recommendation: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/train', methods=['POST'])
 def train_model():
     """Train or update the recommendation model"""
@@ -385,6 +456,7 @@ def root():
             'GET /health': 'Health check',
             'GET /popular': 'Get popular jobs',
             'POST /recommend': 'Get job recommendations (requires userId)',
+            'POST /recommend-cv': 'Get job recommendations based on CV text',
             'POST /train': 'Train recommendation model',
             'POST /feedback': 'Submit feedback',
             'GET /similar/<job_id>': 'Get similar jobs'
@@ -404,6 +476,7 @@ if __name__ == '__main__':
     print("    🏥 http://localhost:5001/health - Health check")
     print("    📊 http://localhost:5001/popular - Popular jobs")
     print("    🤖 http://localhost:5001/recommend - Recommendations (POST)")
+    print("    📄 http://localhost:5001/recommend-cv - CV Recommendations (POST)")
     print("    🔍 http://localhost:5001/similar/<id> - Similar jobs")
     print("    📝 http://localhost:5001/feedback - Submit feedback (POST)")
     print("\n" + "="*70)
