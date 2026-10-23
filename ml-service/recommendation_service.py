@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-import mysql.connector
+import mysql.connector.pooling  # ✅ Connection Pool ለመጠቀም
 import json
 import logging
 from datetime import datetime
@@ -27,10 +27,17 @@ DB_CONFIG = {
     'port': 3307
 }
 
+# ✅ Connection Pool ፍጠር (ለፍጥነት እና ድግግሞሽ ለመከላከል)
+db_pool = mysql.connector.pooling.MySQLConnectionPool(
+    pool_name="mypool",
+    pool_size=5,
+    **DB_CONFIG
+)
+
 def get_db_connection():
-    """Create and return a database connection"""
+    """Create and return a database connection from pool"""
     try:
-        conn = mysql.connector.connect(**DB_CONFIG)
+        conn = db_pool.get_connection()
         return conn
     except mysql.connector.Error as err:
         logger.error(f"Database connection error: {err}")
@@ -58,8 +65,8 @@ def get_all_jobs():
         return []
     
     cursor = conn.cursor(dictionary=True)
-    # ✅ requirements የሚለው ኮለም እዚህ ተጨምሯል
-    cursor.execute('SELECT id, title, description, company, location, type, salary, requirements FROM jobs')
+    # ✅ requirements የሚለው ኮለም እዚህ ተጨምሯል እንዲሁም LIMIT 100 በመጨመር ፍጥነቱን እናሻሽላለን
+    cursor.execute('SELECT id, title, description, company, location, type, salary, requirements FROM jobs ORDER BY created_at DESC LIMIT 100')
     jobs = cursor.fetchall()
     cursor.close()
     conn.close()

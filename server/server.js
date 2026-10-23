@@ -15,7 +15,7 @@ const bcrypt = require('bcryptjs');
 const messageRoutes = require('./routes/messages');
 const axios = require('axios');
 const multer = require('multer');
-const pdfParse = require('pdf-parse');
+const { PDFParse } = require('pdf-parse');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -161,6 +161,7 @@ app.get('/api/recommendations/skills/:userId', async (req, res) => {
 // ፋይሉን በ Memory ውስጥ ብቻ እንይዘው (Disk ላይ አናስቀምጥም)
 const upload = multer({ storage: multer.memoryStorage() });
 
+// በ CV ኤንድፖይንት ውስጥ
 app.post('/api/recommendations/cv', upload.single('cv'), async (req, res) => {
     try {
         if (!req.file) {
@@ -171,8 +172,10 @@ app.post('/api/recommendations/cv', upload.single('cv'), async (req, res) => {
         console.log(`📄 Received CV from User: ${userId}`);
 
         // 1. PDF ን ወደ ጽሁፍ መቀየር
-        const pdfData = await pdfParse(req.file.buffer);
+        const parser = new PDFParse({ data: req.file.buffer });
+        const pdfData = await parser.getText();
         const cvText = pdfData.text;
+        await parser.destroy(); // ማህደረ ትውስታን (Memory) ለማጽዳት
 
         if (!cvText) {
             return res.status(400).json({ error: 'Could not extract text from PDF' });
