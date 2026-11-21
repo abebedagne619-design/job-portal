@@ -109,12 +109,19 @@ function clearCache(pattern) {
 
 // ============= DATABASE CONNECTION =============
 
+
 const pool = mysql.createPool({
     host: process.env.DB_HOST || '127.0.0.1',
     user: process.env.DB_USER || 'root',
     password: process.env.DB_PASSWORD || '',
     database: process.env.DB_NAME || 'jobportal',
     port: Number(process.env.DB_PORT || 3307),
+
+    // Enable TLS only for the cloud database
+    ssl: process.env.DB_HOST
+        ? { minVersion: 'TLSv1.2' }
+        : undefined,
+
     waitForConnections: true,
     connectionLimit: 15,
     queueLimit: 0,
@@ -122,6 +129,7 @@ const pool = mysql.createPool({
     enableKeepAlive: true,
     keepAliveInitialDelay: 10000
 });
+
 
 const promisePool = pool.promise();
 
