@@ -21,3 +21,4 @@ npm-debug.log*
 .env
 .cache_ggshield 
 .cache_ggshield 
+server/uploads/cv/

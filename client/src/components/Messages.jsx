@@ -187,7 +187,7 @@ const Messages = ({ user, setCurrentPage }) => {
         }
 
         const newSocket = io(BASE_URL, {
-            transports: ['websocket', 'polling'],
+            transports: ['polling'],
             reconnection: true,
             reconnectionAttempts: 5,
             reconnectionDelay: 1000,

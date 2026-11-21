@@ -173,7 +173,7 @@ router.get('/conversations/:userId', async (req, res) => {
 // IMPORTANT: Keep this BEFORE generic message routes.
 // ==========================================
 
-router.get('/unread/:userId', async (req, res) => {
+router.get('/unread/:userId', authenticateUser, async (req, res) => {
     try {
         const currentUserId = req.user.id;
 

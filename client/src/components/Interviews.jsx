@@ -1,38 +1,33 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useLanguage } from '../context/LanguageContext';
+
+const API_URL = 'http://localhost:5000';
 
 const Interviews = ({ user }) => {
     const { language } = useLanguage();
     const isAmharic = language === 'am';
 
+    const isApplicant =
+        user?.role === 'user' ||
+        user?.role === 'applicant';
+
+    const isEmployer = user?.role === 'employer';
+    const isAdmin = user?.role === 'admin';
+
     const [interviews, setInterviews] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [message, setMessage] = useState('');
     const [error, setError] = useState('');
-    const [updatingId, setUpdatingId] = useState(null);
+    const [processingId, setProcessingId] = useState(null);
 
-    // Safely read JSON responses
-    const readResponse = async (response) => {
-        try {
-            return await response.json();
-        } catch {
-            return {};
-        }
+    const getToken = () => {
+        return sessionStorage.getItem('token');
     };
 
-    // Fetch interviews
-    const fetchInterviews = useCallback(async () => {
-        if (!user?.id) return;
-
-        const token = sessionStorage.getItem('token');
-
-        if (!token) {
-            setError(
-                isAmharic
-                    ? 'የLogin Token አልተገኘም። እባክዎ Login ያድርጉ።'
-                    : 'Authentication token not found. Please login again.'
-            );
-            setInterviews([]);
+    // FETCH INTERVIEWS
+    const fetchInterviews = async () => {
+        if (!user?.id) {
             setLoading(false);
             return;
         }
@@ -41,526 +36,602 @@ const Interviews = ({ user }) => {
             setLoading(true);
             setError('');
 
-            const endpoint = user.role === 'employer'
-                ? `http://localhost:5000/api/interviews/employer/${user.id}`
-                : `http://localhost:5000/api/interviews/user/${user.id}`;
+            const token = getToken();
+
+            if (!token) {
+                setError(
+                    isAmharic
+                        ? 'እባክዎ እንደገና Login ያድርጉ።'
+                        : 'Please login again.'
+                );
+                return;
+            }
+
+            const endpoint = isAdmin
+    ? `${API_URL}/api/interviews/user/${user.id}`
+    : isEmployer
+        ? `${API_URL}/api/interviews/employer/${user.id}`
+        : `${API_URL}/api/interviews/user/${user.id}`;
 
             const response = await fetch(endpoint, {
                 method: 'GET',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
                 }
             });
 
-            const data = await readResponse(response);
+            const data = await response.json();
 
             if (!response.ok) {
                 throw new Error(
-                    data.message ||
-                    data.error ||
-                    `Server Error (${response.status})`
+                    data.error || 'Failed to load interviews'
                 );
             }
 
-            if (!Array.isArray(data)) {
-                throw new Error(
-                    isAmharic
-                        ? 'ከServer የተላከው ዳታ ትክክል አይደለም።'
-                        : 'Invalid response received from server.'
-                );
-            }
-
-            setInterviews(data);
+            setInterviews(Array.isArray(data) ? data : []);
 
         } catch (err) {
-            console.error('Error fetching interviews:', err);
-            setInterviews([]);
-            setError(err.message);
+            console.error('Fetch interviews error:', err);
+
+            setError(
+                isAmharic
+                    ? 'የቃለ መጠይቅ መረጃ መጫን አልተቻለም።'
+                    : 'Unable to load interviews.'
+            );
         } finally {
             setLoading(false);
         }
-    }, [user?.id, user?.role, isAmharic]);
+    };
 
     useEffect(() => {
-        if (user?.id) {
-            fetchInterviews();
-        }
-    }, [user?.id, user?.role, fetchInterviews]);
+        fetchInterviews();
+    }, [user?.id, user?.role, language]);
 
-    // Accept or Decline interview
-    const handleStatusUpdate = async (id, action) => {
-        const token = sessionStorage.getItem('token');
-
-        if (!token) {
-            alert(
-                isAmharic
-                    ? 'Login Token አልተገኘም። እባክዎ Login ያድርጉ።'
-                    : 'Authentication token not found. Please login again.'
-            );
-            return;
-        }
-
-        const actionText = action === 'accept'
-            ? (isAmharic ? 'መቀበል' : 'accept')
-            : (isAmharic ? 'አለመቀበል' : 'decline');
-
+    // ACCEPT INTERVIEW
+    const handleAccept = async (interviewId) => {
         const confirmed = window.confirm(
             isAmharic
-                ? `የቃለ መጠይቁን ቀጠሮ ${actionText} ይፈልጋሉ?`
-                : `Are you sure you want to ${actionText} this interview?`
+                ? 'ይህን የቃለ መጠይቅ ቀጠሮ መቀበል ይፈልጋሉ?'
+                : 'Do you want to accept this interview?'
         );
 
         if (!confirmed) return;
 
         try {
-            setUpdatingId(id);
+            setProcessingId(interviewId);
+            setMessage('');
+            setError('');
 
-            const res = await fetch(
-                `http://localhost:5000/api/interviews/${action}/${id}`,
+            const token = getToken();
+
+            const response = await fetch(
+                `${API_URL}/api/interviews/accept/${interviewId}`,
                 {
                     method: 'PUT',
                     headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${token}`
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
                     }
                 }
             );
 
-            const result = await readResponse(res);
+            const data = await response.json();
 
-            if (!res.ok) {
+            if (!response.ok) {
                 throw new Error(
-                    result.message ||
-                    result.error ||
-                    `Update failed (${res.status})`
+                    data.error || 'Failed to accept interview'
                 );
             }
 
-            alert(
-                isAmharic
-                    ? `ቀጠሮው ${action === 'accept' ? 'ተቀብለዋል' : 'ውድቅ ተደርጓል'}።`
-                    : `Interview ${action === 'accept' ? 'accepted' : 'declined'} successfully.`
+            setInterviews(prev =>
+                prev.map(interview =>
+                    Number(interview.id) === Number(interviewId)
+                        ? { ...interview, status: 'accepted' }
+                        : interview
+                )
             );
 
-            await fetchInterviews();
+            setMessage(
+                isAmharic
+                    ? 'ቀጠሮውን በተሳካ ሁኔታ ተቀብለዋል።'
+                    : 'Interview accepted successfully.'
+            );
 
         } catch (err) {
-            console.error('Update error:', err);
+            console.error('Accept interview error:', err);
 
-            alert(
+            setError(
                 isAmharic
-                    ? `ስህተት፦ ${err.message}`
-                    : `Error: ${err.message}`
+                    ? 'ቀጠሮውን መቀበል አልተቻለም።'
+                    : 'Unable to accept interview.'
             );
         } finally {
-            setUpdatingId(null);
+            setProcessingId(null);
         }
     };
 
-    // Format MySQL DATE without timezone shifting
-    const formatInterviewDate = (dateValue) => {
-        if (!dateValue) {
-            return isAmharic ? 'አልተገለጸም' : 'Not specified';
+    // DECLINE INTERVIEW
+    const handleDecline = async (interviewId) => {
+        const confirmed = window.confirm(
+            isAmharic
+                ? 'ይህን የቃለ መጠይቅ ቀጠሮ ውድቅ ማድረግ ይፈልጋሉ?'
+                : 'Do you want to decline this interview?'
+        );
+
+        if (!confirmed) return;
+
+        try {
+            setProcessingId(interviewId);
+            setMessage('');
+            setError('');
+
+            const token = getToken();
+
+            const response = await fetch(
+                `${API_URL}/api/interviews/decline/${interviewId}`,
+                {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                }
+            );
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(
+                    data.error || 'Failed to decline interview'
+                );
+            }
+
+            setInterviews(prev =>
+                prev.map(interview =>
+                    Number(interview.id) === Number(interviewId)
+                        ? { ...interview, status: 'declined' }
+                        : interview
+                )
+            );
+
+            setMessage(
+                isAmharic
+                    ? 'ቀጠሮውን ውድቅ አድርገዋል።'
+                    : 'Interview declined successfully.'
+            );
+
+        } catch (err) {
+            console.error('Decline interview error:', err);
+
+            setError(
+                isAmharic
+                    ? 'ቀጠሮውን ውድቅ ማድረግ አልተቻለም።'
+                    : 'Unable to decline interview.'
+            );
+        } finally {
+            setProcessingId(null);
         }
+    };
 
-        const datePart = String(dateValue).split('T')[0].split(' ')[0];
-        const parts = datePart.split('-');
+    // DATE FORMAT
+    const formatDate = (dateValue) => {
+        if (!dateValue) return '-';
 
-        if (parts.length !== 3) return dateValue;
+        const date = new Date(dateValue);
 
-        const [year, month, day] = parts.map(Number);
-
-        if (!year || !month || !day) return dateValue;
-
-        const date = new Date(year, month - 1, day);
+        if (Number.isNaN(date.getTime())) {
+            return dateValue;
+        }
 
         return date.toLocaleDateString(
-            isAmharic ? 'am-ET' : 'en-GB',
-            { dateStyle: 'full' }
-        );
-    };
-
-    // Format MySQL TIME
-    const formatInterviewTime = (timeValue) => {
-        if (!timeValue) {
-            return '';
-        }
-
-        const timePart = String(timeValue).split('.')[0];
-        const parts = timePart.split(':');
-
-        if (parts.length < 2) return timeValue;
-
-        const hour = Number(parts[0]);
-        const minute = Number(parts[1]);
-
-        if (Number.isNaN(hour) || Number.isNaN(minute)) {
-            return timeValue;
-        }
-
-        const date = new Date();
-        date.setHours(hour, minute, 0, 0);
-
-        return date.toLocaleTimeString(
-            isAmharic ? 'am-ET' : 'en-GB',
+            isAmharic ? 'am-ET' : 'en-US',
             {
-                hour: '2-digit',
-                minute: '2-digit',
-                hour12: true
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
             }
         );
     };
 
-    // Translate interview status
-    const getStatusLabel = (status) => {
-        if (!isAmharic) {
-            return status || 'pending';
-        }
+    // TIME FORMAT
+    const formatTime = (timeValue) => {
+        if (!timeValue) return '-';
 
-        const statuses = {
-            pending: 'በመጠባበቅ ላይ',
-            accepted: 'ተቀባይነት አግኝቷል',
-            declined: 'ውድቅ ተደርጓል',
-            scheduled: 'ተቀጥሯል',
-            completed: 'ተጠናቋል',
-            cancelled: 'ተሰርዟል',
-            rescheduled: 'ቀጠሮው ተቀይሯል'
+        const parts = String(timeValue).split(':');
+
+        if (parts.length < 2) return timeValue;
+
+        let hour = Number(parts[0]);
+        const minute = parts[1];
+
+        if (Number.isNaN(hour)) return timeValue;
+
+        const period = hour >= 12 ? 'PM' : 'AM';
+
+        hour = hour % 12 || 12;
+
+        return `${hour}:${minute} ${period}`;
+    };
+
+    // STATUS LABEL
+    const getStatusLabel = (status) => {
+        const labels = {
+            pending: isAmharic ? 'በመጠባበቅ ላይ' : 'Pending',
+            accepted: isAmharic ? 'ተቀባይነት አግኝቷል' : 'Accepted',
+            declined: isAmharic ? 'ውድቅ ተደርጓል' : 'Declined',
+            scheduled: isAmharic ? 'ተይዟል' : 'Scheduled',
+            completed: isAmharic ? 'ተጠናቋል' : 'Completed',
+            cancelled: isAmharic ? 'ተሰርዟል' : 'Cancelled',
+            rescheduled: isAmharic ? 'እንደገና ተይዟል' : 'Rescheduled'
         };
 
-        return statuses[status] || status || 'በመጠባበቅ ላይ';
+        return labels[status] || status;
     };
 
     const getStatusColor = (status) => {
-        switch (status) {
-            case 'accepted':
-                return '#2ecc71';
-            case 'pending':
-                return '#f1c40f';
-            case 'declined':
-            case 'cancelled':
-                return '#e74c3c';
-            case 'completed':
-                return '#3498db';
-            default:
-                return '#95a5a6';
-        }
+        const colors = {
+            pending: '#f39c12',
+            accepted: '#27ae60',
+            declined: '#e74c3c',
+            scheduled: '#3498db',
+            completed: '#16a085',
+            cancelled: '#7f8c8d',
+            rescheduled: '#8e44ad'
+        };
+
+        return colors[status] || '#7f8c8d';
     };
 
-    if (!user) {
+    if (loading) {
         return (
-            <p>
-                {isAmharic ? 'ተጠቃሚ አልተገኘም' : 'User not found'}
-            </p>
+            <div style={styles.center}>
+                {isAmharic
+                    ? 'መረጃ በመጫን ላይ...'
+                    : 'Loading interviews...'}
+            </div>
         );
     }
 
     return (
-        <div style={{
-            padding: '2rem',
-            color: '#fff',
-            maxWidth: '900px',
-            margin: '0 auto',
-            fontFamily: 'inherit'
-        }}>
+        <div style={styles.container}>
 
-            <h2 style={{
-                color: '#2ecc71',
-                textAlign: 'center',
-                marginBottom: '2rem'
-            }}>
+            <h2 style={styles.heading}>
                 {isAmharic
-                    ? '📅 የቃለ መጠይቅ ቀጠሮዎች'
-                    : '📅 Interview Appointments'}
+                    ? 'የቃለ መጠይቅ ቀጠሮዎች'
+                    : 'My Interviews'}
             </h2>
 
-            {loading ? (
-                <p style={{ textAlign: 'center' }}>
-                    {isAmharic ? 'በመጫን ላይ...' : 'Loading...'}
-                </p>
-            ) : error ? (
-                <div style={{
-                    background: '#3d1a1a',
-                    padding: '2rem',
-                    borderRadius: '15px',
-                    textAlign: 'center',
-                    border: '1px solid #e74c3c'
-                }}>
-                    <p style={{ color: '#ff7675' }}>
-                        ❌ {isAmharic ? 'ስህተት፦ ' : 'Error: '}
-                        {error}
-                    </p>
-
-                    <button
-                        onClick={fetchInterviews}
-                        style={{
-                            background: '#2ecc71',
-                            color: '#000',
-                            padding: '10px 25px',
-                            border: 'none',
-                            borderRadius: '8px',
-                            cursor: 'pointer',
-                            fontWeight: 'bold'
-                        }}
-                    >
-                        {isAmharic ? 'እንደገና ሞክር' : 'Try Again'}
-                    </button>
+            {message && (
+                <div style={styles.successMessage}>
+                    {message}
                 </div>
-            ) : interviews.length === 0 ? (
-                <div style={{
-                    background: '#1a3d1a',
-                    padding: '3rem',
-                    borderRadius: '15px',
-                    textAlign: 'center',
-                    border: '1px dashed #2ecc71'
-                }}>
-                    <p style={{
-                        fontSize: '1.2rem',
-                        color: '#bbb'
-                    }}>
-                        {isAmharic
-                            ? 'ምንም የቃለ መጠይቅ ቀጠሮ የለም።'
-                            : 'No interviews scheduled.'}
-                    </p>
+            )}
+
+            {error && (
+                <div style={styles.errorMessage}>
+                    {error}
+                </div>
+            )}
+
+            {interviews.length === 0 ? (
+                <div style={styles.empty}>
+                    {isAmharic
+                        ? 'ምንም የቃለ መጠይቅ ቀጠሮ የለም።'
+                        : 'No interviews found.'}
                 </div>
             ) : (
-                <div style={{
-                    display: 'grid',
-                    gap: '1.5rem'
-                }}>
-                    {interviews.map((interview) => (
+                <div style={styles.grid}>
+
+                    {interviews.map(interview => (
                         <div
                             key={interview.id}
-                            style={{
-                                background: 'linear-gradient(145deg, #1a3d1a, #0d210d)',
-                                padding: '1.5rem',
-                                borderRadius: '15px',
-                                border: '1px solid rgba(46, 204, 113, 0.2)',
-                                boxShadow: '0 4px 15px rgba(0,0,0,0.3)'
-                            }}
+                            style={styles.card}
                         >
-                            <div style={{
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                alignItems: 'flex-start',
-                                gap: '1rem',
-                                flexWrap: 'wrap'
-                            }}>
-                                <div>
-                                    <h3 style={{
-                                        margin: 0,
-                                        color: '#2ecc71',
-                                        fontSize: '1.4rem'
-                                    }}>
-                                        {interview.job_title}
-                                    </h3>
 
-                                    <p style={{
-                                        color: '#bbb',
-                                        margin: '5px 0'
-                                    }}>
-                                        🏢 {interview.company ||
-                                            interview.employer_name ||
-                                            (isAmharic
-                                                ? 'የኩባንያ ስም የለም'
-                                                : 'Company not provided')}
-                                    </p>
+                            <div style={styles.cardHeader}>
+                                <h3 style={styles.jobTitle}>
+                                    {interview.job_title || 'Interview'}
+                                </h3>
 
-                                    {user.role === 'applicant' &&
-                                        interview.employer_name && (
-                                            <p style={{
-                                                color: '#bbb',
-                                                margin: '5px 0'
-                                            }}>
-                                                👤 {isAmharic
-                                                    ? 'አሰሪ፦ '
-                                                    : 'Employer: '}
-                                                {interview.employer_name}
-                                            </p>
-                                        )}
-
-                                    {user.role === 'employer' &&
-                                        interview.applicant_name && (
-                                            <p style={{
-                                                color: '#bbb',
-                                                margin: '5px 0'
-                                            }}>
-                                                👤 {isAmharic
-                                                    ? 'አመልካች፦ '
-                                                    : 'Applicant: '}
-                                                {interview.applicant_name}
-                                            </p>
-                                        )}
-                                </div>
-
-                                <span style={{
-                                    background: getStatusColor(interview.status),
-                                    color: '#000',
-                                    padding: '6px 15px',
-                                    borderRadius: '20px',
-                                    fontSize: '0.85rem',
-                                    fontWeight: 'bold'
-                                }}>
+                                <span
+                                    style={{
+                                        ...styles.status,
+                                        backgroundColor:
+                                            getStatusColor(interview.status)
+                                    }}
+                                >
                                     {getStatusLabel(interview.status)}
                                 </span>
                             </div>
 
-                            <hr style={{
-                                border: '0.5px solid rgba(255,255,255,0.1)',
-                                margin: '1.2rem 0'
-                            }} />
+                            <div style={styles.details}>
 
-                            <div style={{ lineHeight: '1.8' }}>
                                 <p>
-                                    🕒 <strong>
-                                        {isAmharic
-                                            ? 'ቀን፦'
-                                            : 'Date:'}
+                                    <strong>
+                                        {isAmharic ? 'ኩባንያ:' : 'Company:'}
                                     </strong>{' '}
-                                    {formatInterviewDate(interview.scheduled_date)}
+                                    {interview.company || '-'}
+                                </p>
+
+                                {isApplicant && (
+                                    <p>
+                                        <strong>
+                                            {isAmharic
+                                                ? 'ቀጣሪ:'
+                                                : 'Employer:'}
+                                        </strong>{' '}
+                                        {interview.employer_name || '-'}
+                                    </p>
+                                )}
+
+                                {(isEmployer || isAdmin) && (
+                                    <>
+                                        <p>
+                                            <strong>
+                                                {isAmharic
+                                                    ? 'አመልካች:'
+                                                    : 'Applicant:'}
+                                            </strong>{' '}
+                                            {interview.applicant_name || '-'}
+                                        </p>
+
+                                        <p>
+                                            <strong>Email:</strong>{' '}
+                                            {interview.applicant_email || '-'}
+                                        </p>
+                                    </>
+                                )}
+
+                                <p>
+                                    <strong>
+                                        {isAmharic ? 'ቀን:' : 'Date:'}
+                                    </strong>{' '}
+                                    {formatDate(interview.scheduled_date)}
                                 </p>
 
                                 <p>
-                                    ⏰ <strong>
-                                        {isAmharic
-                                            ? 'ሰዓት፦'
-                                            : 'Time:'}
+                                    <strong>
+                                        {isAmharic ? 'ሰዓት:' : 'Time:'}
                                     </strong>{' '}
-                                    {formatInterviewTime(interview.interview_time) ||
-                                        (isAmharic ? 'አልተገለጸም' : 'Not specified')}
+                                    {formatTime(interview.interview_time)}
                                 </p>
 
-                                <p>
-                                    📍 <strong>
-                                        {isAmharic
-                                            ? 'ቦታ/ሊንክ፦'
-                                            : 'Location/Link:'}
-                                    </strong>{' '}
+                                {interview.location && (
+                                    <p>
+                                        <strong>
+                                            {isAmharic
+                                                ? 'ቦታ:'
+                                                : 'Location:'}
+                                        </strong>{' '}
+                                        {interview.location}
+                                    </p>
+                                )}
 
-                                    {(interview.meeting_link || interview.location)
-                                        ?.startsWith('http') ? (
+                                {interview.meeting_link && (
+                                    <p>
+                                        <strong>
+                                            {isAmharic
+                                                ? 'የስብሰባ ሊንክ:'
+                                                : 'Meeting Link:'}
+                                        </strong>{' '}
                                         <a
-                                            href={interview.meeting_link || interview.location}
+                                            href={interview.meeting_link}
                                             target="_blank"
-                                            rel="noreferrer"
-                                            style={{
-                                                color: '#3498db',
-                                                textDecoration: 'underline',
-                                                fontWeight: '500'
-                                            }}
+                                            rel="noopener noreferrer"
+                                            style={styles.link}
                                         >
                                             {isAmharic
-                                                ? 'ወደ ስብሰባው ይቀላቀሉ'
+                                                ? 'ስብሰባውን ይቀላቀሉ'
                                                 : 'Join Meeting'}
                                         </a>
-                                    ) : (
-                                        <span style={{ color: '#eee' }}>
-                                            {interview.meeting_link ||
-                                                interview.location ||
-                                                (isAmharic
-                                                    ? 'አልተገለጸም'
-                                                    : 'Not specified')}
-                                        </span>
-                                    )}
-                                </p>
+                                    </p>
+                                )}
 
                                 {interview.notes && (
-                                    <p style={{
-                                        fontSize: '0.95rem',
-                                        color: '#aaa',
-                                        marginTop: '10px',
-                                        background: 'rgba(255,255,255,0.05)',
-                                        padding: '10px',
-                                        borderRadius: '8px'
-                                    }}>
-                                        📝 <strong>
-                                            {isAmharic ? 'ማስታወሻ፦' : 'Notes:'}
+                                    <p>
+                                        <strong>
+                                            {isAmharic
+                                                ? 'ማስታወሻ:'
+                                                : 'Notes:'}
                                         </strong>{' '}
                                         {interview.notes}
                                     </p>
                                 )}
+
                             </div>
 
-                            {user.role === 'applicant' &&
-                                interview.status === 'pending' && (
-                                    <div style={{
-                                        display: 'flex',
-                                        gap: '1rem',
-                                        marginTop: '1.5rem',
-                                        flexWrap: 'wrap'
-                                    }}>
-                                        <button
-                                            onClick={() =>
-                                                handleStatusUpdate(interview.id, 'accept')
-                                            }
-                                            disabled={updatingId !== null}
-                                            style={{
-                                                background: '#2ecc71',
-                                                color: '#000',
-                                                border: 'none',
-                                                padding: '10px 25px',
-                                                borderRadius: '8px',
-                                                cursor: updatingId !== null
-                                                    ? 'not-allowed'
-                                                    : 'pointer',
-                                                fontWeight: 'bold',
-                                                opacity: updatingId !== null ? 0.6 : 1
-                                            }}
-                                        >
-                                            {updatingId === interview.id
-                                                ? (isAmharic ? 'በመጫን ላይ...' : 'Updating...')
-                                                : (isAmharic ? 'ተቀበል' : 'Accept')} ✅
-                                        </button>
+                            {/* ADMIN / EMPLOYER ACCEPT / DECLINE BUTTONS */}
+{(isEmployer || isAdmin) &&
+    interview.status === 'pending' && (
+        <div style={styles.actions}>
+            <button
+                style={styles.acceptButton}
+                onClick={() => handleAccept(interview.id)}
+                disabled={processingId === interview.id}
+            >
+                {processingId === interview.id
+                    ? '...'
+                    : isAmharic ? 'ተቀበል' : 'Accept'}
+            </button>
 
-                                        <button
-                                            onClick={() =>
-                                                handleStatusUpdate(interview.id, 'decline')
-                                            }
-                                            disabled={updatingId !== null}
-                                            style={{
-                                                background: 'transparent',
-                                                color: '#e74c3c',
-                                                border: '1px solid #e74c3c',
-                                                padding: '10px 25px',
-                                                borderRadius: '8px',
-                                                cursor: updatingId !== null
-                                                    ? 'not-allowed'
-                                                    : 'pointer',
-                                                fontWeight: '500',
-                                                opacity: updatingId !== null ? 0.6 : 1
-                                            }}
-                                        >
-                                            {isAmharic ? 'እምቢ በል' : 'Decline'} ❌
-                                        </button>
-                                    </div>
-                                )}
+            <button
+                style={styles.declineButton}
+                onClick={() => handleDecline(interview.id)}
+                disabled={processingId === interview.id}
+            >
+                {processingId === interview.id
+                    ? '...'
+                    : isAmharic ? 'ውድቅ አድርግ' : 'Decline'}
+            </button>
+        </div>
+    )}
+                            {/* ACCEPTED MESSAGE */}
+                            {isApplicant && interview.status === 'accepted' && (
+    <div style={styles.acceptedMessage}>
+        ✓ {isAmharic
+            ? 'የቃለ መጠይቁን ቀጠሮ ተቀብለዋል። መልካም ዕድል!'
+            : 'You have accepted this interview. Good luck!'}
+    </div>
+)}
+                            {/* DECLINED MESSAGE */}
+                            {isApplicant && interview.status === 'declined' && (
+    <div style={styles.declinedMessage}>
+        ❌ {isAmharic
+            ? 'የቃለ መጠይቁ ቀጠሮ ውድቅ ተደርጓል።'
+            : 'You have declined this interview.'}
+    </div>
+)}
 
-                            {user.role === 'applicant' &&
-                                interview.status === 'accepted' && (
-                                    <div style={{
-                                        background: 'rgba(46, 204, 113, 0.1)',
-                                        padding: '10px',
-                                        borderRadius: '8px',
-                                        marginTop: '1rem',
-                                        borderLeft: '4px solid #2ecc71'
-                                    }}>
-                                        <p style={{
-                                            color: '#2ecc71',
-                                            margin: 0,
-                                            fontSize: '0.9rem'
-                                        }}>
-                                            ✓ {isAmharic
-                                                ? 'የቃለ መጠይቁን ቀጠሮ ተቀብለዋል። መልካም ዕድል!'
-                                                : 'You have accepted this interview. Good luck!'}
-                                        </p>
-                                    </div>
-                                )}
                         </div>
                     ))}
+
                 </div>
             )}
+
         </div>
     );
+};
+
+const styles = {
+    container: {
+        maxWidth: '1100px',
+        margin: '30px auto',
+        padding: '20px'
+    },
+
+    heading: {
+        textAlign: 'center',
+        marginBottom: '25px',
+        color: '#2c3e50'
+    },
+
+    center: {
+        textAlign: 'center',
+        padding: '50px',
+        fontSize: '18px'
+    },
+
+    grid: {
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+        gap: '20px'
+    },
+
+    card: {
+        background: '#fff',
+        padding: '20px',
+        borderRadius: '12px',
+        boxShadow: '0 3px 12px rgba(0,0,0,0.1)',
+        border: '1px solid #eee'
+    },
+
+    cardHeader: {
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        gap: '10px',
+        flexWrap: 'wrap',
+        marginBottom: '15px'
+    },
+
+    jobTitle: {
+        margin: 0,
+        color: '#2c3e50',
+        fontSize: '18px'
+    },
+
+    status: {
+        color: '#fff',
+        padding: '6px 10px',
+        borderRadius: '20px',
+        fontSize: '12px',
+        fontWeight: 'bold'
+    },
+
+    details: {
+        lineHeight: '1.8',
+        color: '#444',
+        overflowWrap: 'anywhere'
+    },
+
+    actions: {
+        display: 'flex',
+        gap: '10px',
+        marginTop: '18px'
+    },
+
+    acceptButton: {
+        flex: 1,
+        padding: '10px',
+        background: '#27ae60',
+        color: '#fff',
+        border: 'none',
+        borderRadius: '6px',
+        cursor: 'pointer',
+        fontWeight: 'bold'
+    },
+
+    declineButton: {
+        flex: 1,
+        padding: '10px',
+        background: '#e74c3c',
+        color: '#fff',
+        border: 'none',
+        borderRadius: '6px',
+        cursor: 'pointer',
+        fontWeight: 'bold'
+    },
+
+    acceptedMessage: {
+        background: 'rgba(39, 174, 96, 0.1)',
+        color: '#27ae60',
+        padding: '12px',
+        borderRadius: '8px',
+        marginTop: '18px',
+        borderLeft: '4px solid #27ae60'
+    },
+
+    declinedMessage: {
+        background: 'rgba(231, 76, 60, 0.1)',
+        color: '#e74c3c',
+        padding: '12px',
+        borderRadius: '8px',
+        marginTop: '18px',
+        borderLeft: '4px solid #e74c3c'
+    },
+
+    successMessage: {
+        background: '#e8f8f0',
+        color: '#218c54',
+        padding: '12px',
+        borderRadius: '8px',
+        marginBottom: '18px',
+        textAlign: 'center'
+    },
+
+    errorMessage: {
+        background: '#fdecea',
+        color: '#c0392b',
+        padding: '12px',
+        borderRadius: '8px',
+        marginBottom: '18px',
+        textAlign: 'center'
+    },
+
+    empty: {
+        textAlign: 'center',
+        padding: '40px',
+        background: '#f8f9fa',
+        borderRadius: '10px',
+        color: '#777'
+    },
+
+    link: {
+        color: '#3498db',
+        textDecoration: 'none',
+        fontWeight: 'bold'
+    }
 };
 
 export default Interviews;

@@ -1714,11 +1714,13 @@ app.get('/api/interviews/employer/:id', async (req, res) => {
 });
 
 
+
 // 3. EMPLOYER: SCHEDULE INTERVIEW
 app.post('/api/interviews/schedule', async (req, res) => {
     try {
         const user = await getAuthenticatedUser(req);
 
+        // Only employers can schedule interviews
         if (user.role !== 'employer') {
             return res.status(403).json({
                 success: false,
@@ -1731,9 +1733,11 @@ app.post('/api/interviews/schedule', async (req, res) => {
             applicantId,
             scheduledDate,
             meetingLink,
+            location,
             notes
         } = req.body;
 
+        // Required fields
         if (!jobId || !applicantId || !scheduledDate) {
             return res.status(400).json({
                 success: false,
@@ -1741,7 +1745,7 @@ app.post('/api/interviews/schedule', async (req, res) => {
             });
         }
 
-        // Expected format: YYYY-MM-DD HH:mm:ss
+        // Validate date and time format
         const match = String(scheduledDate).match(
             /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(?::(\d{2}))?$/
         );
@@ -1759,18 +1763,74 @@ app.post('/api/interviews/schedule', async (req, res) => {
         // Validate calendar date and time
         const [year, month, day] = date.split('-').map(Number);
         const [hour, minute, second] = time.split(':').map(Number);
-        const dateCheck = new Date(Date.UTC(year, month - 1, day));
+
+        const dateCheck = new Date(
+            Date.UTC(year, month - 1, day)
+        );
 
         if (
             dateCheck.getUTCFullYear() !== year ||
             dateCheck.getUTCMonth() !== month - 1 ||
             dateCheck.getUTCDate() !== day ||
-            hour > 23 || minute > 59 || second > 59
+            hour < 0 || hour > 23 ||
+            minute < 0 || minute > 59 ||
+            second < 0 || second > 59
         ) {
             return res.status(400).json({
                 success: false,
                 error: 'Invalid interview date/time'
             });
+        }
+
+        // Validate interview type
+        const cleanMeetingLink = String(meetingLink || '').trim();
+        const cleanLocation = String(location || '').trim();
+
+        if (cleanMeetingLink && cleanLocation) {
+            return res.status(400).json({
+                success: false,
+                error: 'Provide either a meeting link or an office location, not both'
+            });
+        }
+
+        if (!cleanMeetingLink && !cleanLocation) {
+            return res.status(400).json({
+                success: false,
+                error: 'Meeting link or office location is required'
+            });
+        }
+
+        // Validate online meeting URL
+        if (cleanMeetingLink) {
+            let validMeetingLink = false;
+
+            try {
+                const url = new URL(cleanMeetingLink);
+
+                const host = url.hostname.toLowerCase();
+
+                validMeetingLink =
+                    (url.protocol === 'https:' || url.protocol === 'http:') &&
+                    (
+                        host === 'meet.google.com' ||
+                        host === 'zoom.us' ||
+                        host.endsWith('.zoom.us') ||
+                        host === 'teams.microsoft.com' ||
+                        host.endsWith('.teams.microsoft.com') ||
+                        host === 'whereby.com' ||
+                        host.endsWith('.whereby.com')
+                    );
+
+            } catch {
+                validMeetingLink = false;
+            }
+
+            if (!validMeetingLink) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Please provide a valid Google Meet, Zoom, Teams or Whereby meeting link'
+                });
+            }
         }
 
         // Confirm that this job belongs to the logged-in employer
@@ -1786,7 +1846,7 @@ app.post('/api/interviews/schedule', async (req, res) => {
             });
         }
 
-        // Confirm that the applicant has applied for this job
+        // Confirm that applicant applied for this job
         const [applications] = await promisePool.query(
             `SELECT id FROM applications
              WHERE job_id = ? AND user_id = ?`,
@@ -1800,24 +1860,34 @@ app.post('/api/interviews/schedule', async (req, res) => {
             });
         }
 
+        // Save interview in database
         const [result] = await promisePool.query(
             `INSERT INTO interviews
-                (job_id, applicant_id, employer_id,
-                 scheduled_date, interview_time,
-                 meeting_link, notes, status)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
+                (
+                    job_id,
+                    applicant_id,
+                    employer_id,
+                    scheduled_date,
+                    interview_time,
+                    meeting_link,
+                    location,
+                    notes,
+                    status
+                )
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
             [
                 jobId,
                 applicantId,
                 user.id,
                 date,
                 time,
-                meetingLink || null,
-                notes || null
+                cleanMeetingLink || null,
+                cleanLocation || null,
+                notes ? String(notes).trim() : null
             ]
         );
 
-        res.status(201).json({
+        return res.status(201).json({
             success: true,
             message: 'Interview scheduled successfully',
             interviewId: result.insertId
@@ -1825,25 +1895,47 @@ app.post('/api/interviews/schedule', async (req, res) => {
 
     } catch (err) {
         console.error('Schedule interview error:', err);
-        res.status(err.message === 'Unauthorized' ? 401 : 500)
-            .json({ success: false, error: err.message });
+
+        return res.status(
+            err.message === 'Unauthorized' ? 401 : 500
+        ).json({
+            success: false,
+            error: err.message
+        });
     }
 });
 
 
-// 4. APPLICANT: ACCEPT INTERVIEW
+
+// 4. ADMIN / EMPLOYER: ACCEPT INTERVIEW
 app.put('/api/interviews/accept/:id', async (req, res) => {
     try {
         const user = await getAuthenticatedUser(req);
 
-        const [result] = await promisePool.query(
-            `UPDATE interviews
-             SET status = 'accepted'
-             WHERE id = ?
-               AND applicant_id = ?
-               AND status = 'pending'`,
-            [req.params.id, user.id]
-        );
+        // Only Admin or Employer can accept
+        if (user.role !== 'admin' && user.role !== 'employer') {
+            return res.status(403).json({
+                success: false,
+                error: 'Only admin or employer can accept interviews'
+            });
+        }
+
+        let sql = `
+            UPDATE interviews
+            SET status = 'accepted'
+            WHERE id = ?
+              AND status = 'pending'
+        `;
+
+        const params = [req.params.id];
+
+        // Employer can only accept their own interviews
+        if (user.role === 'employer') {
+            sql += ' AND employer_id = ?';
+            params.push(user.id);
+        }
+
+        const [result] = await promisePool.query(sql, params);
 
         if (result.affectedRows === 0) {
             return res.status(404).json({
@@ -1865,19 +1957,35 @@ app.put('/api/interviews/accept/:id', async (req, res) => {
 });
 
 
-// 5. APPLICANT: DECLINE INTERVIEW
+// 5. ADMIN / EMPLOYER: DECLINE INTERVIEW
 app.put('/api/interviews/decline/:id', async (req, res) => {
     try {
         const user = await getAuthenticatedUser(req);
 
-        const [result] = await promisePool.query(
-            `UPDATE interviews
-             SET status = 'declined'
-             WHERE id = ?
-               AND applicant_id = ?
-               AND status = 'pending'`,
-            [req.params.id, user.id]
-        );
+        // Only Admin or Employer can decline
+        if (user.role !== 'admin' && user.role !== 'employer') {
+            return res.status(403).json({
+                success: false,
+                error: 'Only admin or employer can decline interviews'
+            });
+        }
+
+        let sql = `
+            UPDATE interviews
+            SET status = 'declined'
+            WHERE id = ?
+              AND status = 'pending'
+        `;
+
+        const params = [req.params.id];
+
+        // Employer can only decline their own interviews
+        if (user.role === 'employer') {
+            sql += ' AND employer_id = ?';
+            params.push(user.id);
+        }
+
+        const [result] = await promisePool.query(sql, params);
 
         if (result.affectedRows === 0) {
             return res.status(404).json({
@@ -1897,6 +2005,7 @@ app.put('/api/interviews/decline/:id', async (req, res) => {
             .json({ success: false, error: err.message });
     }
 });
+
 
 
 // ============= ANALYTICS TRACK VIEW API =============
@@ -2705,15 +2814,24 @@ app.post(
 
                 if (jobRows.length > 0) {
 
-                    await sendPushToUser(
-                        jobRows[0].employer_id,
-                        {
-                            title: 'New Job Application',
-                            body: `${name} applied for ${jobRows[0].title}`,
-                            url: '/employer-apps'
-                        }
-                    );
-                }
+    // Create real-time personal notification
+    await notificationsModule.createNotification(
+        jobRows[0].employer_id,
+        'new_application',
+        'New Job Application',
+        `${name} applied for ${jobRows[0].title}`
+    );
+
+    // Keep existing Web Push notification
+    await sendPushToUser(
+        jobRows[0].employer_id,
+        {
+            title: 'New Job Application',
+            body: `${name} applied for ${jobRows[0].title}`,
+            url: '/employer-apps'
+        }
+    );
+}
 
             } catch (notificationError) {
 
@@ -3021,7 +3139,7 @@ app.put('/api/applications/:id/status', async (req, res) => {
         if (user.role === 'admin') {
 
             [applications] = await promisePool.query(
-                'SELECT id FROM applications WHERE id = ?',
+                'SELECT id, user_id FROM applications WHERE id = ?',
                 [req.params.id]
             );
 
@@ -3029,10 +3147,10 @@ app.put('/api/applications/:id/status', async (req, res) => {
 
             [applications] = await promisePool.query(
                 `
-                SELECT a.id
-                FROM applications a
-                JOIN jobs j ON a.job_id = j.id
-                WHERE a.id = ? AND j.employer_id = ?
+                SELECT a.id, a.user_id
+FROM applications a
+JOIN jobs j ON a.job_id = j.id
+WHERE a.id = ? AND j.employer_id = ?
                 `,
                 [
                     req.params.id,
@@ -3059,7 +3177,12 @@ app.put('/api/applications/:id/status', async (req, res) => {
                 req.params.id
             ]
         );
-
+await notificationsModule.createNotification(
+    applications[0].user_id,
+    'application_status',
+    'Application Status Updated',
+    `Your application status has been updated to: ${status}`
+);
         console.log(
             `✅ Application ${req.params.id} updated to: ${status}`
         );
@@ -3222,6 +3345,9 @@ const io = socketIo(server, {
     pingTimeout: 60000,
     pingInterval: 25000
 });
+
+// Connect Notifications Module to Socket.IO
+notificationsModule.setSocketIO(io);
 
 // Multiple connections per user.
 const onlineUsers = new Map();

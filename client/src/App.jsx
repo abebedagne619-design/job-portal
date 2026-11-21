@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import {
     BrowserRouter,
@@ -141,6 +140,18 @@ function AppContent() {
     const [showAdvanced, setShowAdvanced] = useState(false);
 
     // ==========================================
+    // NOTIFICATION UPDATE EVENT
+    // ==========================================
+
+    const handleNotificationsUpdated = () => {
+
+        window.dispatchEvent(
+            new Event('notifications-updated')
+        );
+
+    };
+
+    // ==========================================
     // PRIVATE PAGES
     // ==========================================
 
@@ -244,12 +255,12 @@ function AppContent() {
             try {
 
                 const res = await fetch(`${API_URL}/api/auth/me`, {
-    method: 'GET',
-    cache: 'no-store',
-    headers: {
-        Authorization: `Bearer ${token}`
-    }
-});
+                    method: 'GET',
+                    cache: 'no-store',
+                    headers: {
+                        Authorization: `Bearer ${token}`
+                    }
+                });
 
                 if (!active) return;
 
@@ -258,7 +269,7 @@ function AppContent() {
                     const data = await res.json();
 
                     const verifiedUser =
-                         data?.data ||
+                        data?.data ||
                         data?.user ||
                         parsedUser;
 
@@ -1363,23 +1374,23 @@ function AppContent() {
     }
 
     if (
-    !sessionChecked &&
-    protectedPages.includes(currentPage)
-) {
-    return (
-        <div style={{
-            minHeight: '100vh',
-            background: '#0a3d0a',
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            color: '#fff',
-            fontSize: '20px'
-        }}>
-            Checking your session...
-        </div>
-    );
-}
+        !sessionChecked &&
+        protectedPages.includes(currentPage)
+    ) {
+        return (
+            <div style={{
+                minHeight: '100vh',
+                background: '#0a3d0a',
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
+                color: '#fff',
+                fontSize: '20px'
+            }}>
+                Checking your session...
+            </div>
+        );
+    }
 
     // ==========================================
     // PROTECTED PAGE ACCESS CONTROL
@@ -1516,7 +1527,10 @@ function AppContent() {
             case 'notifications':
 
                 return (
-                    <Notifications user={user} />
+                    <Notifications
+                        user={user}
+                        onNotificationsUpdated={handleNotificationsUpdated}
+                    />
                 );
 
             // ======================================
@@ -1581,7 +1595,7 @@ function AppContent() {
             case 'admin':
 
                 return user?.role === 'admin'
-                   ? <AdminDashboard user={user} />
+                    ? <AdminDashboard user={user} />
                     : (
                         <div
                             style={{
@@ -2238,4 +2252,3 @@ function App() {
 }
 
 export default App;
-

@@ -1,8 +1,12 @@
+
 const express = require('express');
 const router = express.Router();
 const mysql = require('mysql2');
+const jwt = require('jsonwebtoken');
 
-// Database connection
+// ==========================================
+// DATABASE CONNECTION
+// ==========================================
 const pool = mysql.createPool({
     host: process.env.DB_HOST || '127.0.0.1',
     user: process.env.DB_USER || 'root',
@@ -16,103 +20,355 @@ const pool = mysql.createPool({
 
 const promisePool = pool.promise();
 
-// ============= 1. CREATE GLOBAL NOTIFICATION (ለአዲስ ስራ) =============
-// ይህ ተግባር አንድ ስራ ሲለጠፍ አንዴ ብቻ ዳታቤዝ ላይ ለመመዝገብ ነው
+// ==========================================
+// SOCKET.IO CONNECTION
+// ==========================================
+let ioInstance = null;
+
+const setSocketIO = (io) => {
+    ioInstance = io;
+};
+
+// ==========================================
+// AUTHENTICATION
+// ==========================================
+const authenticateUser = async (req, res, next) => {
+    try {
+        const authHeader = req.headers.authorization;
+
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            return res.status(401).json({
+                success: false,
+                message: 'Authentication token is required'
+            });
+        }
+
+        const token = authHeader.split(' ')[1];
+
+        const decoded = jwt.verify(
+            token,
+            process.env.JWT_SECRET || 'jobportal_secret_key_2024'
+        );
+
+        const [users] = await promisePool.query(
+            'SELECT id, name, email, role FROM users WHERE id = ?',
+            [decoded.id]
+        );
+
+        if (!users.length) {
+            return res.status(401).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+
+        req.user = users[0];
+        next();
+
+    } catch (err) {
+        console.error('Notification authentication error:', err);
+
+        return res.status(401).json({
+            success: false,
+            message: 'Invalid or expired token'
+        });
+    }
+};
+
+// ==========================================
+// CREATE GLOBAL NOTIFICATION
+// ==========================================
 const createGlobalNotification = async (type, title, message) => {
     try {
         const [result] = await promisePool.query(
-            'INSERT INTO global_notifications (type, title, message) VALUES (?, ?, ?)',
+            `INSERT INTO global_notifications
+             (type, title, message)
+             VALUES (?, ?, ?)`,
             [type, title, message]
         );
-        console.log(`✅ Global Notification Created: ${title}`);
+
+        console.log('Global notification created:', title);
+
+        // Send real-time notification to connected users.
+        if (ioInstance) {
+            ioInstance.emit('new-notification', {
+                id: result.insertId,
+                type,
+                title,
+                message,
+                category: 'global',
+                is_read: 0
+            });
+        }
+
         return result.insertId;
+
     } catch (err) {
-        console.error('❌ Global notification error:', err);
+        console.error('Global notification error:', err);
         return null;
     }
 };
 
-// ============= 2. CREATE PERSONAL NOTIFICATION (ለኢንተርቪው) =============
-// የድሮው createNotification ስሙን ጠብቆ ለግል መልእክቶች እንዲሰራ ሆኗል
+// ==========================================
+// CREATE PERSONAL NOTIFICATION
+// ==========================================
 const createNotification = async (userId, type, title, message) => {
     try {
         const [result] = await promisePool.query(
-            'INSERT INTO notifications (user_id, type, title, message, is_read, created_at) VALUES (?, ?, ?, ?, false, NOW())',
+            `INSERT INTO notifications
+             (user_id, type, title, message, is_read, created_at)
+             VALUES (?, ?, ?, ?, 0, NOW())`,
             [userId, type, title, message]
         );
-        console.log(`✅ Personal Notification created for user ${userId}`);
+
+        console.log(
+            `Personal notification created for user ${userId}`
+        );
+
+        // Send real-time notification to the specific user's room.
+        if (ioInstance) {
+            ioInstance.to(String(userId)).emit('new-notification', {
+                id: result.insertId,
+                userId: String(userId),
+                type,
+                title,
+                message,
+                category: 'personal',
+                is_read: 0
+            });
+        }
+
         return result.insertId;
+
     } catch (err) {
-        console.error('❌ Personal notification error:', err);
+        console.error('Personal notification error:', err);
         return null;
     }
 };
 
-// ============= 3. GET ALL NOTIFICATIONS (Global + Personal) =============
-// ተጠቃሚው ገጹን ሲከፍት ሁለቱንም በአንድ ላይ አዋህዶ ያሳያል
-router.get('/user/:userId', async (req, res) => {
+// ==========================================
+// GET USER NOTIFICATIONS
+// ==========================================
+router.get('/user/:userId', authenticateUser, async (req, res) => {
     try {
-        const userId = req.params.userId;
-        
-        // የግል ማሳወቂያዎች እና አጠቃላይ ማሳወቂያዎችን (ያልተነበቡትን) በአንድ ላይ ያመጣል
-        const [notifications] = await promisePool.query(`
-            SELECT id, type, title, message, is_read, created_at, 'personal' as category FROM notifications WHERE user_id = ?
-            UNION ALL
-            SELECT g.id, g.type, g.title, g.message, false as is_read, g.created_at, 'global' as category 
-            FROM global_notifications g
-            LEFT JOIN notification_reads r ON g.id = r.notification_id AND r.user_id = ?
-            WHERE r.notification_id IS NULL
-            ORDER BY created_at DESC
-        `, [userId, userId]);
+        const requestedUserId = Number(req.params.userId);
+        const authenticatedUserId = Number(req.user.id);
 
-        res.json(notifications);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// ============= 4. MARK AS READ (Global and Personal) =============
-router.put('/read/:id', async (req, res) => {
-    const { id } = req.params;
-    const { userId, category } = req.body; // category: 'global' ወይም 'personal'
-
-    try {
-        if (category === 'global') {
-            // ለአጠቃላይ ማሳወቂያ 'notification_reads' ውስጥ መመዝገብ
-            await promisePool.query(
-                'INSERT IGNORE INTO notification_reads (user_id, notification_id) VALUES (?, ?)',
-                [userId, id]
-            );
-        } else {
-            // ለግል ማሳወቂያ 'is_read' ማደስ
-            await promisePool.query('UPDATE notifications SET is_read = true WHERE id = ?', [id]);
+        // Users can only access their own notifications.
+        if (requestedUserId !== authenticatedUserId) {
+            return res.status(403).json({
+                success: false,
+                message: 'You cannot access another user notifications'
+            });
         }
-        res.json({ message: 'Marked as read successfully' });
+
+        const [notifications] = await promisePool.query(
+            `
+            SELECT
+                id,
+                type,
+                title,
+                message,
+                is_read,
+                created_at,
+                'personal' AS category
+            FROM notifications
+            WHERE user_id = ?
+
+            UNION ALL
+
+            SELECT
+                g.id,
+                g.type,
+                g.title,
+                g.message,
+                0 AS is_read,
+                g.created_at,
+                'global' AS category
+            FROM global_notifications g
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM notification_reads r
+                WHERE r.notification_id = g.id
+                AND r.user_id = ?
+            )
+
+            ORDER BY created_at DESC
+            `,
+            [authenticatedUserId, authenticatedUserId]
+        );
+
+        return res.json(notifications);
+
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error('Get notifications error:', err);
+
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to fetch notifications'
+        });
     }
 });
 
-// የድሮውን Routes ሳይቀነስ መቀጠል...
-router.get('/unread/:userId', async (req, res) => {
+// ==========================================
+// MARK NOTIFICATION AS READ
+// ==========================================
+router.put('/read/:id', authenticateUser, async (req, res) => {
     try {
-        const userId = req.params.userId;
-        const [personalCount] = await promisePool.query('SELECT COUNT(*) as count FROM notifications WHERE user_id = ? AND is_read = false', [userId]);
-        const [globalCount] = await promisePool.query(`
-            SELECT COUNT(*) as count FROM global_notifications g
-            LEFT JOIN notification_reads r ON g.id = r.notification_id AND r.user_id = ?
-            WHERE r.notification_id IS NULL
-        `, [userId]);
-        
-        res.json({ count: (personalCount[0].count + globalCount[0].count) });
+        const notificationId = Number(req.params.id);
+        const userId = Number(req.user.id);
+        const { category } = req.body;
+
+        if (!Number.isInteger(notificationId) || notificationId <= 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid notification ID'
+            });
+        }
+
+        if (!['personal', 'global'].includes(category)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid notification category'
+            });
+        }
+
+        // PERSONAL NOTIFICATION
+        if (category === 'personal') {
+            const [result] = await promisePool.query(
+                `UPDATE notifications
+                 SET is_read = 1
+                 WHERE id = ? AND user_id = ?`,
+                [notificationId, userId]
+            );
+
+            if (result.affectedRows === 0) {
+                const [existing] = await promisePool.query(
+                    `SELECT id, is_read
+                     FROM notifications
+                     WHERE id = ? AND user_id = ?`,
+                    [notificationId, userId]
+                );
+
+                if (!existing.length) {
+                    return res.status(404).json({
+                        success: false,
+                        message: 'Notification not found'
+                    });
+                }
+            }
+        }
+
+        // GLOBAL NOTIFICATION
+        if (category === 'global') {
+            const [globalNotification] = await promisePool.query(
+                `SELECT id
+                 FROM global_notifications
+                 WHERE id = ?`,
+                [notificationId]
+            );
+
+            if (!globalNotification.length) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Global notification not found'
+                });
+            }
+
+            // Check first to avoid duplicate read records.
+            const [existingRead] = await promisePool.query(
+                `SELECT id
+                 FROM notification_reads
+                 WHERE user_id = ? AND notification_id = ?
+                 LIMIT 1`,
+                [userId, notificationId]
+            );
+
+            if (!existingRead.length) {
+                await promisePool.query(
+                    `INSERT INTO notification_reads
+                     (user_id, notification_id)
+                     VALUES (?, ?)`,
+                    [userId, notificationId]
+                );
+            }
+        }
+
+        return res.json({
+            success: true,
+            message: 'Notification marked as read'
+        });
+
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error('Mark notification read error:', err);
+
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to mark notification as read'
+        });
     }
 });
 
-// Exporting
+// ==========================================
+// GET UNREAD NOTIFICATION COUNT
+// ==========================================
+router.get('/unread/:userId', authenticateUser, async (req, res) => {
+    try {
+        const requestedUserId = Number(req.params.userId);
+        const userId = Number(req.user.id);
+
+        if (requestedUserId !== userId) {
+            return res.status(403).json({
+                success: false,
+                message: 'You cannot access another user notifications'
+            });
+        }
+
+        const [personalResult] = await promisePool.query(
+            `SELECT COUNT(*) AS count
+             FROM notifications
+             WHERE user_id = ? AND is_read = 0`,
+            [userId]
+        );
+
+        const [globalResult] = await promisePool.query(
+            `SELECT COUNT(*) AS count
+             FROM global_notifications g
+             WHERE NOT EXISTS (
+                 SELECT 1
+                 FROM notification_reads r
+                 WHERE r.notification_id = g.id
+                 AND r.user_id = ?
+             )`,
+            [userId]
+        );
+
+        const personalCount = Number(personalResult[0].count);
+        const globalCount = Number(globalResult[0].count);
+
+        return res.json({
+            success: true,
+            count: personalCount + globalCount,
+            personalCount,
+            globalCount
+        });
+
+    } catch (err) {
+        console.error('Unread notification count error:', err);
+
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to count unread notifications'
+        });
+    }
+});
+
+// ==========================================
+// EXPORTS
+// ==========================================
 module.exports = {
     router,
     createNotification,
-    createGlobalNotification // አዲሱ እዚህ ተጨምሯል
+    createGlobalNotification,
+    setSocketIO
 };

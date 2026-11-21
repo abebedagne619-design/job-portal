@@ -29,7 +29,12 @@ const Navbar = ({
     const [showChat, setShowChat] = useState(false);
     const [selectedChatUser, setSelectedChatUser] = useState(null);
 
+    // Unread messages
     const [unreadCount, setUnreadCount] = useState(0);
+
+    // Unread notifications
+    const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
+
     const [showUserMenu, setShowUserMenu] = useState(false);
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
@@ -75,10 +80,7 @@ const Navbar = ({
             );
 
             if (!res.ok) {
-                console.warn(
-                    'Unread message API error:',
-                    res.status
-                );
+                console.warn('Unread message API error:', res.status);
                 return;
             }
 
@@ -92,8 +94,45 @@ const Navbar = ({
             setUnreadCount(Number(count) || 0);
 
         } catch (err) {
+            console.error('Error fetching unread messages:', err);
+        }
+    }, [user?.id, getAuthHeaders]);
+
+    // ==========================================
+    // FETCH UNREAD NOTIFICATION COUNT
+    // ==========================================
+    const fetchNotificationUnreadCount = useCallback(async () => {
+        if (!user?.id) {
+            setNotificationUnreadCount(0);
+            return;
+        }
+
+        try {
+            const res = await fetch(
+                `${API_URL}/api/notifications/unread/${user.id}`,
+                {
+                    method: 'GET',
+                    headers: getAuthHeaders()
+                }
+            );
+
+            if (!res.ok) {
+                console.warn(
+                    'Unread notification API error:',
+                    res.status
+                );
+                return;
+            }
+
+            const data = await res.json();
+
+            setNotificationUnreadCount(
+                Number(data?.count) || 0
+            );
+
+        } catch (err) {
             console.error(
-                'Error fetching unread messages:',
+                'Error fetching unread notifications:',
                 err
             );
         }
@@ -120,11 +159,7 @@ const Navbar = ({
             );
 
             if (!res.ok) {
-                console.warn(
-                    'Users API error:',
-                    res.status
-                );
-
+                console.warn('Users API error:', res.status);
                 setAvailableUsers([]);
                 return;
             }
@@ -144,8 +179,7 @@ const Navbar = ({
 
             setAvailableUsers(
                 users.filter(
-                    usr =>
-                        String(usr.id) !== String(user.id)
+                    usr => String(usr.id) !== String(user.id)
                 )
             );
 
@@ -164,6 +198,7 @@ const Navbar = ({
     useEffect(() => {
         if (!user?.id) {
             setUnreadCount(0);
+            setNotificationUnreadCount(0);
             setAvailableUsers([]);
             setShowUserMenu(false);
             setShowChat(false);
@@ -185,11 +220,12 @@ const Navbar = ({
         }
 
         fetchUnreadCount();
+        fetchNotificationUnreadCount();
         fetchAvailableUsers();
 
         // Create ONE authenticated Socket.IO connection.
         const socket = io(API_URL, {
-            transports: ['websocket', 'polling'],
+            transports: ['polling'],
             reconnection: true,
             reconnectionAttempts: 5,
             reconnectionDelay: 1000,
@@ -202,58 +238,39 @@ const Navbar = ({
         socketRef.current = socket;
         setSocketInstance(socket);
 
-        // ------------------------------------------
         // SOCKET CONNECTED
-        // ------------------------------------------
         const handleConnect = () => {
             console.log(
                 'Connected to authenticated Socket.IO:',
                 socket.id
             );
-
-            // No user-connected event is needed.
-            // The server identifies the user using JWT.
         };
 
-        // ------------------------------------------
         // UNREAD MESSAGE UPDATE
-        // ------------------------------------------
         const handleUnreadUpdate = (data) => {
-            if (
-                String(data?.userId) === String(user.id)
-            ) {
-                setUnreadCount(
-                    Number(data?.count) || 0
-                );
-
-                // Refresh count from the API.
+            if (String(data?.userId) === String(user.id)) {
+                setUnreadCount(Number(data?.count) || 0);
                 fetchUnreadCount();
             }
         };
 
-        // ------------------------------------------
         // NEW MESSAGE
-        // ------------------------------------------
-        const handleNewMessage = (message) => {
-            console.log('New message received:', message);
-
-            // Refresh navbar unread count.
+        const handleNewMessage = () => {
             fetchUnreadCount();
         };
 
-        // ------------------------------------------
-        // DISCONNECT
-        // ------------------------------------------
-        const handleDisconnect = (reason) => {
-            console.log(
-                'Socket disconnected:',
-                reason
-            );
+        // NEW NOTIFICATION
+        const handleNewNotification = (notification) => {
+            console.log('New notification received:', notification);
+            fetchNotificationUnreadCount();
         };
 
-        // ------------------------------------------
+        // DISCONNECT
+        const handleDisconnect = (reason) => {
+            console.log('Socket disconnected:', reason);
+        };
+
         // CONNECTION ERROR
-        // ------------------------------------------
         const handleConnectError = (error) => {
             console.error(
                 'Socket connection error:',
@@ -264,16 +281,19 @@ const Navbar = ({
         socket.on('connect', handleConnect);
         socket.on('unread-update', handleUnreadUpdate);
         socket.on('new-message', handleNewMessage);
+
+        // Listener ready for server-side notification events
+        socket.on('new-notification', handleNewNotification);
+
         socket.on('disconnect', handleDisconnect);
         socket.on('connect_error', handleConnectError);
 
-        // ------------------------------------------
         // CLEANUP
-        // ------------------------------------------
         return () => {
             socket.off('connect', handleConnect);
             socket.off('unread-update', handleUnreadUpdate);
             socket.off('new-message', handleNewMessage);
+            socket.off('new-notification', handleNewNotification);
             socket.off('disconnect', handleDisconnect);
             socket.off('connect_error', handleConnectError);
 
@@ -288,7 +308,21 @@ const Navbar = ({
     }, [
         user?.id,
         fetchUnreadCount,
+        fetchNotificationUnreadCount,
         fetchAvailableUsers
+    ]);
+
+    // ==========================================
+    // REFRESH NOTIFICATIONS WHEN PAGE IS OPENED
+    // ==========================================
+    useEffect(() => {
+        if (user?.id && currentPage === 'notifications') {
+            fetchNotificationUnreadCount();
+        }
+    }, [
+        user?.id,
+        currentPage,
+        fetchNotificationUnreadCount
     ]);
 
     // ==========================================
@@ -302,7 +336,6 @@ const Navbar = ({
         setIsMobileMenuOpen(false);
         setSearchTerm('');
 
-        // Disconnect shared socket.
         if (socketRef.current) {
             socketRef.current.disconnect();
             socketRef.current = null;
@@ -311,6 +344,7 @@ const Navbar = ({
         setSocketInstance(null);
 
         setUnreadCount(0);
+        setNotificationUnreadCount(0);
         setAvailableUsers([]);
 
         setUser(null);
@@ -361,7 +395,6 @@ const Navbar = ({
     // ==========================================
     const navigatePage = (page, isMobile = false) => {
         setCurrentPage(page);
-
         setShowUserMenu(false);
 
         if (isMobile) {
@@ -376,11 +409,8 @@ const Navbar = ({
         user?.role === 'applicant' ||
         user?.role === 'user';
 
-    const isEmployer =
-        user?.role === 'employer';
-
-    const isAdmin =
-        user?.role === 'admin';
+    const isEmployer = user?.role === 'employer';
+    const isAdmin = user?.role === 'admin';
 
     // ==========================================
     // PREMIUM GREEN THEME STYLES
@@ -526,6 +556,23 @@ const Navbar = ({
             boxSizing: 'border-box'
         },
 
+        notificationBadge: {
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            marginLeft: '7px',
+            minWidth: '19px',
+            height: '19px',
+            padding: '0 5px',
+            background: '#ef4444',
+            color: '#fff',
+            borderRadius: '20px',
+            fontSize: '0.68rem',
+            fontWeight: '800',
+            border: '2px solid #082b1c',
+            boxSizing: 'border-box'
+        },
+
         hamburger: {
             display: 'none',
             fontSize: '1.8rem',
@@ -583,27 +630,41 @@ const Navbar = ({
                 <>
                     {/* NOTIFICATIONS */}
                     <span
-                        style={styles.link(
-                            currentPage === 'notifications'
-                        )}
-                        onClick={() =>
-                            navigatePage('notifications', isMobile)
-                        }
+                        style={{
+                            ...styles.link(
+                                currentPage === 'notifications'
+                            ),
+                            position: 'relative'
+                        }}
+                        onClick={() => {
+                            navigatePage('notifications', isMobile);
+                            fetchNotificationUnreadCount();
+                        }}
                         role="button"
                         tabIndex={0}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                                navigatePage('notifications', isMobile);
+                                fetchNotificationUnreadCount();
+                            }
+                        }}
                     >
                         🔔 {t.notifications || 'Notifications'}
+
+                        {notificationUnreadCount > 0 && (
+                            <span style={styles.notificationBadge}>
+                                {notificationUnreadCount > 99
+                                    ? '99+'
+                                    : notificationUnreadCount}
+                            </span>
+                        )}
                     </span>
 
                     {/* JOB ALERTS */}
                     {(isApplicant || isAdmin) && (
                         <span
-                            style={styles.link(
-                                currentPage === 'alerts'
-                            )}
-                            onClick={() =>
-                                navigatePage('alerts', isMobile)
-                            }
+                            style={styles.link(currentPage === 'alerts')}
+                            onClick={() => navigatePage('alerts', isMobile)}
                             role="button"
                             tabIndex={0}
                         >
@@ -611,32 +672,23 @@ const Navbar = ({
                         </span>
                     )}
 
-                    
-{/* INTERVIEWS */}
-{(isApplicant || isEmployer || isAdmin) && (
-    <span
-        style={styles.link(
-            currentPage === 'interviews'
-        )}
-        onClick={() =>
-            navigatePage('interviews', isMobile)
-        }
-        role="button"
-        tabIndex={0}
-    >
-        📅 {t.interviews || 'Interviews'}
-    </span>
-)}
+                    {/* INTERVIEWS */}
+                    {(isApplicant || isEmployer || isAdmin) && (
+                        <span
+                            style={styles.link(currentPage === 'interviews')}
+                            onClick={() => navigatePage('interviews', isMobile)}
+                            role="button"
+                            tabIndex={0}
+                        >
+                            📅 {t.interviews || 'Interviews'}
+                        </span>
+                    )}
 
                     {/* EMPLOYER APPLICATIONS */}
                     {(isEmployer || isAdmin) && (
                         <span
-                            style={styles.link(
-                                currentPage === 'employer-apps'
-                            )}
-                            onClick={() =>
-                                navigatePage('employer-apps', isMobile)
-                            }
+                            style={styles.link(currentPage === 'employer-apps')}
+                            onClick={() => navigatePage('employer-apps', isMobile)}
                             role="button"
                             tabIndex={0}
                         >
@@ -646,12 +698,8 @@ const Navbar = ({
 
                     {/* SAVED JOBS */}
                     <span
-                        style={styles.link(
-                            currentPage === 'saved'
-                        )}
-                        onClick={() =>
-                            navigatePage('saved', isMobile)
-                        }
+                        style={styles.link(currentPage === 'saved')}
+                        onClick={() => navigatePage('saved', isMobile)}
                         role="button"
                         tabIndex={0}
                     >
@@ -662,12 +710,8 @@ const Navbar = ({
                     {isAdmin && (
                         <>
                             <span
-                                style={styles.link(
-                                    currentPage === 'admin'
-                                )}
-                                onClick={() =>
-                                    navigatePage('admin', isMobile)
-                                }
+                                style={styles.link(currentPage === 'admin')}
+                                onClick={() => navigatePage('admin', isMobile)}
                                 role="button"
                                 tabIndex={0}
                             >
@@ -675,12 +719,8 @@ const Navbar = ({
                             </span>
 
                             <span
-                                style={styles.link(
-                                    currentPage === 'analytics'
-                                )}
-                                onClick={() =>
-                                    navigatePage('analytics', isMobile)
-                                }
+                                style={styles.link(currentPage === 'analytics')}
+                                onClick={() => navigatePage('analytics', isMobile)}
                                 role="button"
                                 tabIndex={0}
                             >
@@ -692,14 +732,10 @@ const Navbar = ({
                     {/* MESSAGES */}
                     <span
                         style={{
-                            ...styles.link(
-                                currentPage === 'messages'
-                            ),
+                            ...styles.link(currentPage === 'messages'),
                             position: 'relative'
                         }}
-                        onClick={() => {
-    navigatePage('messages', isMobile);
-}}
+                        onClick={() => navigatePage('messages', isMobile)}
                         role="button"
                         tabIndex={0}
                     >
@@ -707,9 +743,7 @@ const Navbar = ({
 
                         {unreadCount > 0 && (
                             <span style={styles.badge}>
-                                {unreadCount > 99
-                                    ? '99+'
-                                    : unreadCount}
+                                {unreadCount > 99 ? '99+' : unreadCount}
                             </span>
                         )}
                     </span>
@@ -717,12 +751,8 @@ const Navbar = ({
                     {/* AI RECOMMENDATIONS */}
                     <button
                         type="button"
-                        style={styles.aiBtn(
-                            currentPage === 'recommendations'
-                        )}
-                        onClick={() =>
-                            navigatePage('recommendations', isMobile)
-                        }
+                        style={styles.aiBtn(currentPage === 'recommendations')}
+                        onClick={() => navigatePage('recommendations', isMobile)}
                     >
                         ✨ {t.aiRecommendations || 'AI Recommendations'}
                     </button>
@@ -735,9 +765,7 @@ const Navbar = ({
                     <button
                         type="button"
                         style={styles.btn}
-                        onClick={() =>
-                            navigatePage('login', true)
-                        }
+                        onClick={() => navigatePage('login', true)}
                     >
                         {t.login || 'Login'}
                     </button>
@@ -745,9 +773,7 @@ const Navbar = ({
                     <button
                         type="button"
                         style={styles.btnOutline}
-                        onClick={() =>
-                            navigatePage('register', true)
-                        }
+                        onClick={() => navigatePage('register', true)}
                     >
                         {t.register || 'Register'}
                     </button>
@@ -784,14 +810,10 @@ const Navbar = ({
                             type="button"
                             style={styles.btnOutline}
                             onClick={() =>
-                                setLanguage(
-                                    l => l === 'en' ? 'am' : 'en'
-                                )
+                                setLanguage(l => l === 'en' ? 'am' : 'en')
                             }
                         >
-                            {language === 'en'
-                                ? 'አማርኛ'
-                                : 'English'}
+                            {language === 'en' ? 'አማርኛ' : 'English'}
                         </button>
 
                         {/* LOGGED-IN USER */}
@@ -827,7 +849,6 @@ const Navbar = ({
                                 </button>
                             </>
                         ) : (
-                            /* GUEST LOGIN AND REGISTER */
                             <div
                                 className="guest-auth-buttons"
                                 style={{
@@ -839,9 +860,7 @@ const Navbar = ({
                                 <button
                                     type="button"
                                     style={styles.btn}
-                                    onClick={() =>
-                                        navigatePage('login')
-                                    }
+                                    onClick={() => navigatePage('login')}
                                 >
                                     {t.login || 'Login'}
                                 </button>
@@ -849,9 +868,7 @@ const Navbar = ({
                                 <button
                                     type="button"
                                     style={styles.btnOutline}
-                                    onClick={() =>
-                                        navigatePage('register')
-                                    }
+                                    onClick={() => navigatePage('register')}
                                 >
                                     {t.register || 'Register'}
                                 </button>
@@ -875,10 +892,7 @@ const Navbar = ({
                 </div>
 
                 {/* DESKTOP NAVIGATION */}
-                <div
-                    className="desktop-only"
-                    style={styles.bottomRow}
-                >
+                <div className="desktop-only" style={styles.bottomRow}>
                     <MenuItems />
                 </div>
 
@@ -924,9 +938,7 @@ const Navbar = ({
                 </style>
             </nav>
 
-            {/* ======================================
-                QUICK CHAT USER MENU
-            ====================================== */}
+            {/* QUICK CHAT USER MENU */}
             {showUserMenu && user && (
                 <div
                     style={{
@@ -940,21 +952,16 @@ const Navbar = ({
                         maxWidth: '90vw',
                         zIndex: 2000,
                         boxShadow: '0 15px 35px rgba(0,0,0,0.45)',
-                        border:
-                            '1px solid rgba(52, 211, 153, 0.5)',
+                        border: '1px solid rgba(52, 211, 153, 0.5)',
                         boxSizing: 'border-box'
                     }}
                 >
-                    {/* VIEW ALL MESSAGES */}
                     <button
                         type="button"
-                        onClick={() =>
-                            navigatePage('messages')
-                        }
+                        onClick={() => navigatePage('messages')}
                         style={{
                             width: '100%',
-                            background:
-                                'linear-gradient(135deg, #059669, #10b981)',
+                            background: 'linear-gradient(135deg, #059669, #10b981)',
                             color: '#fff',
                             border: 'none',
                             padding: '12px',
@@ -980,21 +987,17 @@ const Navbar = ({
                         Quick Chat
                     </div>
 
-                    {/* SEARCH USERS */}
                     <input
                         type="text"
                         placeholder="Search users..."
                         value={searchTerm}
-                        onChange={(e) =>
-                            setSearchTerm(e.target.value)
-                        }
+                        onChange={(e) => setSearchTerm(e.target.value)}
                         style={{
                             width: '100%',
                             padding: '12px',
                             marginBottom: '15px',
                             borderRadius: '7px',
-                            border:
-                                '1px solid rgba(52, 211, 153, 0.25)',
+                            border: '1px solid rgba(52, 211, 153, 0.25)',
                             background: '#061f15',
                             color: '#fff',
                             boxSizing: 'border-box',
@@ -1002,34 +1005,22 @@ const Navbar = ({
                         }}
                     />
 
-                    {/* AVAILABLE USERS */}
-                    <div
-                        style={{
-                            maxHeight: '250px',
-                            overflowY: 'auto'
-                        }}
-                    >
+                    <div style={{ maxHeight: '250px', overflowY: 'auto' }}>
                         {usersLoading ? (
-                            <p
-                                style={{
-                                    color: '#a7f3d0',
-                                    textAlign: 'center',
-                                    padding: '15px'
-                                }}
-                            >
+                            <p style={{
+                                color: '#a7f3d0',
+                                textAlign: 'center',
+                                padding: '15px'
+                            }}>
                                 Loading users...
                             </p>
                         ) : filteredUsers.length > 0 ? (
                             filteredUsers.map(usr => (
                                 <div
                                     key={usr.id}
-                                    onClick={() =>
-                                        openChatWith(usr)
-                                    }
+                                    onClick={() => openChatWith(usr)}
                                     onKeyDown={(e) => {
-                                        if (e.key === 'Enter') {
-                                            openChatWith(usr);
-                                        }
+                                        if (e.key === 'Enter') openChatWith(usr);
                                     }}
                                     role="button"
                                     tabIndex={0}
@@ -1037,38 +1028,28 @@ const Navbar = ({
                                         padding: '12px',
                                         cursor: 'pointer',
                                         color: '#ecfdf5',
-                                        borderBottom:
-                                            '1px solid rgba(52, 211, 153, 0.12)',
+                                        borderBottom: '1px solid rgba(52, 211, 153, 0.12)',
                                         transition: 'background 0.2s'
                                     }}
                                 >
                                     <strong>{usr.name}</strong>
-
                                     <br />
-
-                                    <small
-                                        style={{
-                                            color: '#9ca3af'
-                                        }}
-                                    >
+                                    <small style={{ color: '#9ca3af' }}>
                                         {usr.email}
                                     </small>
                                 </div>
                             ))
                         ) : (
-                            <p
-                                style={{
-                                    color: '#9ca3af',
-                                    textAlign: 'center',
-                                    padding: '15px'
-                                }}
-                            >
+                            <p style={{
+                                color: '#9ca3af',
+                                textAlign: 'center',
+                                padding: '15px'
+                            }}>
                                 No users found.
                             </p>
                         )}
                     </div>
 
-                    {/* CLOSE MENU */}
                     <button
                         type="button"
                         onClick={() => {
@@ -1092,21 +1073,15 @@ const Navbar = ({
                 </div>
             )}
 
-            {/* ======================================
-                CHANGE PASSWORD MODAL
-            ====================================== */}
+            {/* CHANGE PASSWORD MODAL */}
             {showChangePassword && user && (
                 <ChangePassword
                     user={user}
-                    onClose={() =>
-                        setShowChangePassword(false)
-                    }
+                    onClose={() => setShowChangePassword(false)}
                 />
             )}
 
-            {/* ======================================
-                CHAT COMPONENT
-            ====================================== */}
+            {/* CHAT COMPONENT */}
             {showChat && selectedChatUser && user && (
                 <Chat
                     user={user}
@@ -1124,4 +1099,3 @@ const Navbar = ({
 };
 
 export default Navbar;
-

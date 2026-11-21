@@ -1,45 +1,93 @@
 
 import React, { useState } from 'react';
 
-const ScheduleInterview = ({ job, applicant, employer, onClose, onScheduled }) => {
+const ScheduleInterview = ({
+    job,
+    applicant,
+    employer,
+    onClose,
+    onScheduled
+}) => {
     const [scheduledDate, setScheduledDate] = useState('');
     const [scheduledTime, setScheduledTime] = useState('');
+    const [interviewType, setInterviewType] = useState('online');
     const [meetingLink, setMeetingLink] = useState('');
+    const [location, setLocation] = useState('');
     const [notes, setNotes] = useState('');
     const [loading, setLoading] = useState(false);
 
-    // Local date (avoids UTC date differences)
     const now = new Date();
+
     const today = [
         now.getFullYear(),
         String(now.getMonth() + 1).padStart(2, '0'),
         String(now.getDate()).padStart(2, '0')
     ].join('-');
 
+    // Validate Meeting URL
+    const isValidMeetingLink = (value) => {
+        try {
+            const url = new URL(value.trim());
+
+            if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+                return false;
+            }
+
+            const host = url.hostname.toLowerCase();
+
+            return (
+                host === 'meet.google.com' ||
+                host.endsWith('.zoom.us') ||
+                host === 'zoom.us' ||
+                host === 'teams.microsoft.com' ||
+                host.endsWith('.teams.microsoft.com') ||
+                host === 'whereby.com' ||
+                host.endsWith('.whereby.com')
+            );
+        } catch {
+            return false;
+        }
+    };
+
     const handleSubmit = async (e) => {
         e.preventDefault();
 
         if (!scheduledDate || !scheduledTime) {
-            return alert('እባክዎ ቀን እና ሰዓት ይምረጡ!');
+            return alert('እባክዎ የInterview ቀንና ሰዓት ይምረጡ!');
+        }
+
+        if (scheduledDate < today) {
+            return alert('ያለፈ ቀን መምረጥ አይችሉም!');
         }
 
         if (!applicant?.id) {
-            console.error('Missing Applicant ID:', applicant);
-            return alert('❌ ስህተት፡ የአመልካቹ መታወቂያ አልተገኘም!');
+            return alert('❌ የApplicant ID አልተገኘም!');
         }
 
         if (!job?.id) {
-            return alert('❌ የሥራው Job ID አልተገኘም!');
+            return alert('❌ Job ID አልተገኘም!');
         }
 
-        if (!meetingLink.trim()) {
-            return alert('እባክዎ Meeting Link ወይም Office Address ያስገቡ!');
+        if (interviewType === 'online') {
+            if (!meetingLink.trim()) {
+                return alert('እባክዎ Meeting Link ያስገቡ!');
+            }
+
+            if (!isValidMeetingLink(meetingLink)) {
+                return alert(
+                    '❌ ትክክለኛ Google Meet, Zoom, Teams ወይም Whereby Link ያስገቡ!'
+                );
+            }
+        }
+
+        if (interviewType === 'onsite' && !location.trim()) {
+            return alert('እባክዎ የInterview ቦታ ያስገቡ!');
         }
 
         const token = sessionStorage.getItem('token');
 
         if (!token) {
-            return alert('❌ Login session አልተገኘም። እባክዎ Logout እና Login ያድርጉ።');
+            return alert('❌ Login session አልተገኘም። Login ያድርጉ።');
         }
 
         setLoading(true);
@@ -50,21 +98,27 @@ const ScheduleInterview = ({ job, applicant, employer, onClose, onScheduled }) =
             jobId: job.id,
             applicantId: applicant.id,
             scheduledDate: dateTime,
-            meetingLink: meetingLink.trim(),
+            meetingLink: interviewType === 'online'
+                ? meetingLink.trim()
+                : '',
+            location: interviewType === 'onsite'
+                ? location.trim()
+                : '',
             notes: notes.trim()
         };
 
-        console.log('Interview Data:', interviewData);
-
         try {
-            const res = await fetch('http://localhost:5000/api/interviews/schedule', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify(interviewData)
-            });
+            const res = await fetch(
+                'http://localhost:5000/api/interviews/schedule',
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify(interviewData)
+                }
+            );
 
             let result = {};
 
@@ -75,13 +129,11 @@ const ScheduleInterview = ({ job, applicant, employer, onClose, onScheduled }) =
             }
 
             if (!res.ok) {
-                console.error('Schedule Interview Error:', result);
+                console.error('Schedule Error:', result);
 
-                if (res.status === 401 || res.status === 403) {
-                    alert(`❌ ${result.message || result.error || 'Unauthorized. Please login again.'}`);
-                } else {
-                    alert(`❌ Failed: ${result.message || result.error || `Server Error (${res.status})`}`);
-                }
+                alert(
+                    `❌ ${result.message || result.error || 'Failed to schedule interview'}`
+                );
 
                 return;
             }
@@ -92,11 +144,13 @@ const ScheduleInterview = ({ job, applicant, employer, onClose, onScheduled }) =
                 onScheduled();
             }
 
-            onClose();
+            if (onClose) {
+                onClose();
+            }
 
         } catch (err) {
             console.error('Network Error:', err);
-            alert('❌ Server is not responding. Check if backend is running.');
+            alert('❌ Server is not responding. Check backend.');
         } finally {
             setLoading(false);
         }
@@ -105,7 +159,7 @@ const ScheduleInterview = ({ job, applicant, employer, onClose, onScheduled }) =
     const styles = {
         overlay: {
             position: 'fixed',
-            top: 0, left: 0, right: 0, bottom: 0,
+            inset: 0,
             background: 'rgba(0,0,0,0.85)',
             backdropFilter: 'blur(8px)',
             display: 'flex',
@@ -116,7 +170,7 @@ const ScheduleInterview = ({ job, applicant, employer, onClose, onScheduled }) =
         },
         modal: {
             background: 'linear-gradient(145deg, #1a3d1a, #0a2a0a)',
-            padding: '2.5rem',
+            padding: '2rem',
             borderRadius: '24px',
             width: '100%',
             maxWidth: '500px',
@@ -124,7 +178,8 @@ const ScheduleInterview = ({ job, applicant, employer, onClose, onScheduled }) =
             boxShadow: '0 20px 40px rgba(0,0,0,0.4)',
             color: '#fff',
             maxHeight: '90vh',
-            overflowY: 'auto'
+            overflowY: 'auto',
+            boxSizing: 'border-box'
         },
         title: {
             color: '#2ecc71',
@@ -149,7 +204,7 @@ const ScheduleInterview = ({ job, applicant, employer, onClose, onScheduled }) =
             padding: '0.9rem',
             marginBottom: '1.2rem',
             borderRadius: '12px',
-            border: '1px solid rgba(46, 204, 113, 0.2)',
+            border: '1px solid rgba(46, 204, 113, 0.3)',
             background: 'rgba(10, 42, 10, 0.6)',
             color: '#fff',
             outline: 'none',
@@ -161,7 +216,7 @@ const ScheduleInterview = ({ job, applicant, employer, onClose, onScheduled }) =
             padding: '0.9rem',
             marginBottom: '1.2rem',
             borderRadius: '12px',
-            border: '1px solid rgba(46, 204, 113, 0.2)',
+            border: '1px solid rgba(46, 204, 113, 0.3)',
             background: 'rgba(10, 42, 10, 0.6)',
             color: '#fff',
             minHeight: '100px',
@@ -179,8 +234,7 @@ const ScheduleInterview = ({ job, applicant, employer, onClose, onScheduled }) =
             color: '#0a2a0a',
             cursor: 'pointer',
             fontWeight: 'bold',
-            fontSize: '1rem',
-            transition: '0.3s'
+            fontSize: '1rem'
         },
         cancelBtn: {
             width: '100%',
@@ -191,14 +245,38 @@ const ScheduleInterview = ({ job, applicant, employer, onClose, onScheduled }) =
             color: '#ef4444',
             cursor: 'pointer',
             marginTop: '0.8rem',
-            fontSize: '1rem',
-            transition: '0.3s'
+            fontSize: '1rem'
+        },
+        radioBox: {
+            display: 'flex',
+            gap: '12px',
+            marginBottom: '1.3rem',
+            flexWrap: 'wrap'
+        },
+        radioLabel: {
+            flex: 1,
+            minWidth: '120px',
+            padding: '12px',
+            border: '1px solid rgba(46,204,113,0.4)',
+            borderRadius: '10px',
+            cursor: 'pointer',
+            textAlign: 'center',
+            background: 'rgba(10,42,10,0.5)'
+        },
+        hint: {
+            color: '#bbb',
+            fontSize: '0.78rem',
+            marginTop: '-0.8rem',
+            marginBottom: '1.2rem'
         }
     };
 
     return (
         <div style={styles.overlay} onClick={onClose}>
-            <div style={styles.modal} onClick={e => e.stopPropagation()}>
+            <div
+                style={styles.modal}
+                onClick={e => e.stopPropagation()}
+            >
                 <h2 style={styles.title}>Schedule Interview</h2>
 
                 <div style={styles.subTitle}>
@@ -209,6 +287,7 @@ const ScheduleInterview = ({ job, applicant, employer, onClose, onScheduled }) =
 
                 <form onSubmit={handleSubmit}>
                     <label style={styles.label}>Interview Date</label>
+
                     <input
                         style={styles.input}
                         type="date"
@@ -219,6 +298,7 @@ const ScheduleInterview = ({ job, applicant, employer, onClose, onScheduled }) =
                     />
 
                     <label style={styles.label}>Interview Time</label>
+
                     <input
                         style={styles.input}
                         type="time"
@@ -227,19 +307,78 @@ const ScheduleInterview = ({ job, applicant, employer, onClose, onScheduled }) =
                         required
                     />
 
-                    <label style={styles.label}>
-                        Meeting Link or Office Address
-                    </label>
-                    <input
-                        style={styles.input}
-                        type="text"
-                        placeholder="Zoom link or Office Location"
-                        value={meetingLink}
-                        onChange={e => setMeetingLink(e.target.value)}
-                        required
-                    />
+                    <label style={styles.label}>Interview Type</label>
+
+                    <div style={styles.radioBox}>
+                        <label style={styles.radioLabel}>
+                            <input
+                                type="radio"
+                                name="interviewType"
+                                value="online"
+                                checked={interviewType === 'online'}
+                                onChange={() => {
+                                    setInterviewType('online');
+                                    setLocation('');
+                                }}
+                            />
+                            {' '}Online
+                        </label>
+
+                        <label style={styles.radioLabel}>
+                            <input
+                                type="radio"
+                                name="interviewType"
+                                value="onsite"
+                                checked={interviewType === 'onsite'}
+                                onChange={() => {
+                                    setInterviewType('onsite');
+                                    setMeetingLink('');
+                                }}
+                            />
+                            {' '}Office / On-site
+                        </label>
+                    </div>
+
+                    {interviewType === 'online' && (
+                        <>
+                            <label style={styles.label}>
+                                Meeting Link
+                            </label>
+
+                            <input
+                                style={styles.input}
+                                type="url"
+                                placeholder="https://meet.google.com/xxx-yyyy-zzz"
+                                value={meetingLink}
+                                onChange={e => setMeetingLink(e.target.value)}
+                                required
+                            />
+
+                            <div style={styles.hint}>
+                                Supported: Google Meet, Zoom, Microsoft Teams, Whereby
+                            </div>
+                        </>
+                    )}
+
+                    {interviewType === 'onsite' && (
+                        <>
+                            <label style={styles.label}>
+                                Office Address / Location
+                            </label>
+
+                            <input
+                                style={styles.input}
+                                type="text"
+                                placeholder="Example: Addis Ababa, Bole Office"
+                                value={location}
+                                onChange={e => setLocation(e.target.value)}
+                                required
+                            />
+                        </>
+                    )}
 
                     <label style={styles.label}>Additional Notes</label>
+
                     <textarea
                         style={styles.textarea}
                         placeholder="Add any instructions for the candidate..."
