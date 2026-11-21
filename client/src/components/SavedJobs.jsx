@@ -13,7 +13,7 @@ const SavedJobs = ({ user }) => {
 
     const fetchSavedJobs = async () => {
     try {
-        const token = localStorage.getItem('token'); // ቶከኑን መውሰድ
+        const token = sessionStorage.getItem('token'); // ቶከኑን መውሰድ
 
         // 1. አድራሻውን አስተካክዪ (በሰርቨርሽ ላይ ያለው /api/saved ስለሆነ)
         const res = await fetch(`http://localhost:5000/api/saved`, {

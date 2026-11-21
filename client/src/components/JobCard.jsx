@@ -1,24 +1,24 @@
 import React, { useState, useEffect, memo } from 'react';
 
-// memo መጠቀም ካርዱ ባልተገባ ምክንያት (Re-render) እንዳይሆን ይከላከላል
 const JobCard = memo(({ job, user, onApply }) => {
     const [saved, setSaved] = useState(false);
     const [saving, setSaving] = useState(false);
-    const [rating, setRating] = useState(job.rating || 0); 
+    const [rating, setRating] = useState(job.rating || 0);
     const [hover, setHover] = useState(0);
+    const [fakeResult, setFakeResult] = useState(null);
+    const [checkingFake, setCheckingFake] = useState(false);
 
-    // የ ID አሰጣጥን ለማቅለል
     const currentJobId = job.id || job.job_id;
     const currentUserId = user?.id || user?.user_id;
 
-    // 1. Check if job is already saved
+    // 1. ስራው አስቀድሞ መቀመጡን ፈትሽ
     useEffect(() => {
-        let isMounted = true; 
-        
+        let isMounted = true;
+
         if (currentUserId && currentJobId) {
             const checkIfSaved = async () => {
                 try {
-                    const token = localStorage.getItem('token');
+                    const token = sessionStorage.getItem('token');
                     const res = await fetch(`http://localhost:5000/api/saved/check/${currentJobId}`, {
                         headers: {
                             'Authorization': token ? `Bearer ${token}` : '',
@@ -38,21 +38,21 @@ const JobCard = memo(({ job, user, onApply }) => {
         return () => { isMounted = false; };
     }, [currentUserId, currentJobId]);
 
-    // 2. Submit Rating
+    // 2. ደረጃ አስገባ
     const submitRating = async (value) => {
-        if (!user) return alert("እባክሽን መጀመሪያ Login አድርጊ!");
-        
+        if (!user) return alert('⚠️ እባክህ/ሽ መጀመሪያ Login አድርግ/ጊ!');
+
         try {
-            const token = localStorage.getItem('token');
+            const token = sessionStorage.getItem('token');
             const res = await fetch('http://localhost:5000/api/ratings', {
                 method: 'POST',
-                headers: { 
+                headers: {
                     'Content-Type': 'application/json',
                     'Authorization': token ? `Bearer ${token}` : ''
                 },
-                body: JSON.stringify({ 
-                    job_id: currentJobId,    
-                    rating: value 
+                body: JSON.stringify({
+                    job_id: currentJobId,
+                    rating: value
                 })
             });
 
@@ -60,26 +60,26 @@ const JobCard = memo(({ job, user, onApply }) => {
 
             if (res.ok) {
                 setRating(value);
-                alert("ደረጃ ሰጥተሻል! አመሰግናለሁ።");
+                alert('✅ ደረጃ ሰጥተሃል/ሻል! አመሰግናለሁ።');
             } else {
-                alert("ስህተት፡ " + (responseData.message || "መረጃውን መላክ አልተቻለም"));
+                alert('ስህተት፡ ' + (responseData.message || 'መረጃውን መላክ አልተቻለም'));
             }
         } catch (err) {
             console.error('❌ Rating error:', err);
-            alert("ከሰርቨር ጋር መገናኘት አልተቻለም!");
+            alert('❌ ከሰርቨር ጋር መገናኘት አልተቻለም!');
         }
     };
 
-    // 3. Toggle Save Logic (ተስተካክሏል ✅)
+    // 3. Save/Unsave ማድረግ
     const toggleSave = async () => {
-        if (!user) return alert('⚠️ Please login to save jobs');
-        
+        if (!user) return alert('⚠️ እባክህ/ሽ መጀመሪያ Login አድርግ/ጊ!');
+
         setSaving(true);
         try {
-            const token = localStorage.getItem('token');
-            
+            const token = sessionStorage.getItem('token');
+
             if (saved) {
-                // ✅ ለማስወገድ - DELETE request with jobId in URL
+                // ከተቀመጡ ስራዎች አስወግድ
                 const res = await fetch(`http://localhost:5000/api/saved/${currentJobId}`, {
                     method: 'DELETE',
                     headers: {
@@ -90,20 +90,20 @@ const JobCard = memo(({ job, user, onApply }) => {
 
                 if (res.ok) {
                     setSaved(false);
-                    alert("ስራው ከተቀመጡ ተወግዷል!");
+                    alert('🗑️ ስራው ከተቀመጡ ተወግዷል!');
                 } else {
                     const errorData = await res.json();
-                    alert(errorData.message || "ክዋኔው አልተሳካም");
+                    alert(errorData.message || 'ክዋኔው አልተሳካም');
                 }
             } else {
-                // ✅ ለማስቀመጥ - POST request
+                // ስራውን አስቀምጥ
                 const res = await fetch('http://localhost:5000/api/saved', {
                     method: 'POST',
                     headers: {
                         'Authorization': token ? `Bearer ${token}` : '',
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ 
+                    body: JSON.stringify({
                         job_id: currentJobId,
                         title: job.title,
                         company: job.company,
@@ -113,37 +113,60 @@ const JobCard = memo(({ job, user, onApply }) => {
 
                 if (res.ok) {
                     setSaved(true);
-                    alert("ስራው በተሳካ ሁኔታ ተቀምጧል!");
+                    alert('📌 ስራው በተሳካ ሁኔታ ተቀምጧል!');
                 } else {
                     const errorData = await res.json();
-                    alert(errorData.message || "ክዋኔው አልተሳካም");
+                    alert(errorData.message || 'ክዋኔው አልተሳካም');
                 }
             }
         } catch (err) {
             console.error('❌ Error toggling save:', err);
-            alert("ከሰርቨር ጋር መገናኘት አልተቻለም");
+            alert('❌ ከሰርቨር ጋር መገናኘት አልተቻለም');
         } finally {
             setSaving(false);
         }
     };
 
-    // 4. Track job view (Analytics)
+    // 4. የስራውን ትክክለኛነት ፈትሽ
+    const checkAuthenticity = async () => {
+        setCheckingFake(true);
+        try {
+            const res = await fetch('http://localhost:5000/api/jobs/check-fake', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title: job.title,
+                    description: job.description
+                })
+            });
+
+            const data = await res.json();
+            setFakeResult(data);
+        } catch (err) {
+            console.error('❌ Error checking fake:', err);
+            alert('❌ ትክክለኛነቱን መፈተሽ አልተቻለም።');
+        } finally {
+            setCheckingFake(false);
+        }
+    };
+
+    // 5. የስራ እይታን መከታተል (Analytics)
     useEffect(() => {
         if (currentUserId && currentJobId) {
             const timer = setTimeout(() => {
-                const token = localStorage.getItem('token');
+                const token = sessionStorage.getItem('token');
                 fetch(`http://localhost:5000/api/analytics/track-view`, {
                     method: 'POST',
-                    headers: { 
+                    headers: {
                         'Content-Type': 'application/json',
                         'Authorization': token ? `Bearer ${token}` : ''
                     },
-                    body: JSON.stringify({ 
-                        job_id: currentJobId, 
-                        user_id: currentUserId 
+                    body: JSON.stringify({
+                        job_id: currentJobId,
+                        user_id: currentUserId
                     })
-                }).catch(() => {}); 
-            }, 2000); 
+                }).catch(() => {});
+            }, 2000);
             return () => clearTimeout(timer);
         }
     }, [currentUserId, currentJobId]);
@@ -163,32 +186,32 @@ const JobCard = memo(({ job, user, onApply }) => {
         },
         title: { fontSize: '1.4rem', color: '#2ecc71', marginBottom: '0.6rem', fontWeight: '600' },
         company: { color: '#bdc3c7', marginBottom: '0.4rem', display: 'flex', alignItems: 'center', gap: '5px' },
-        starsContainer: { 
-            display: 'flex', 
+        starsContainer: {
+            display: 'flex',
             alignItems: 'center',
-            gap: '0.4rem', 
-            margin: '1.2rem 0' 
+            gap: '0.4rem',
+            margin: '1.2rem 0'
         },
         buttonGroup: { display: 'flex', gap: '0.8rem', marginTop: '1.2rem' },
-        saveBtn: { 
-            flex: 1, 
-            padding: '0.75rem', 
-            background: saved ? 'rgba(231, 76, 60, 0.2)' : 'transparent', 
+        saveBtn: {
+            flex: 1,
+            padding: '0.75rem',
+            background: saved ? 'rgba(231, 76, 60, 0.2)' : 'transparent',
             border: saved ? '1px solid #e74c3c' : '1px solid #2ecc71',
-            color: saved ? '#e74c3c' : '#fff', 
-            borderRadius: '10px', 
+            color: saved ? '#e74c3c' : '#fff',
+            borderRadius: '10px',
             cursor: saving ? 'not-allowed' : 'pointer',
             fontWeight: '600',
             transition: 'all 0.2s',
             opacity: saving ? 0.6 : 1
         },
-        applyBtn: { 
-            flex: 1, 
-            padding: '0.75rem', 
-            background: '#2ecc71', 
-            color: '#fff', 
-            borderRadius: '10px', 
-            cursor: 'pointer', 
+        applyBtn: {
+            flex: 1,
+            padding: '0.75rem',
+            background: '#2ecc71',
+            color: '#fff',
+            borderRadius: '10px',
+            cursor: 'pointer',
             border: 'none',
             fontWeight: '600',
             boxShadow: '0 4px 15px rgba(46, 204, 113, 0.3)'
@@ -199,24 +222,30 @@ const JobCard = memo(({ job, user, onApply }) => {
         <div style={styles.card} className="job-card-hover">
             <h3 style={styles.title}>{job.title}</h3>
             <p style={styles.company}>🏢 {job.company}</p>
-            <p style={{color: '#ecf0f1', fontSize: '0.95rem'}}>📍 {job.location || 'አዲስ አበባ'}</p>
-            <p style={{color: '#2ecc71', fontWeight: 'bold', marginTop: '8px', fontSize: '1.1rem'}}>
-                💰 {job.salary_min && job.salary_max ? `${job.salary_min.toLocaleString()} - ${job.salary_max.toLocaleString()} ብር` : (job.salary || 'በስምምነት')}
+            <p style={{ color: '#ecf0f1', fontSize: '0.95rem' }}>
+                📍 {job.location || 'አዲስ አበባ'}
             </p>
-            
+            <p style={{ color: '#2ecc71', fontWeight: 'bold', marginTop: '8px', fontSize: '1.1rem' }}>
+                💰 {job.salary_min && job.salary_max
+                    ? `${job.salary_min.toLocaleString()} - ${job.salary_max.toLocaleString()} ብር`
+                    : (job.salary || 'በስምምነት')}
+            </p>
+
             <div style={styles.starsContainer}>
                 {[1, 2, 3, 4, 5].map(star => (
-                    <span key={star} 
+                    <span
+                        key={star}
                         onClick={() => submitRating(star)}
                         onMouseEnter={() => setHover(star)}
                         onMouseLeave={() => setHover(0)}
-                        style={{ 
-                            cursor: 'pointer', 
-                            color: (hover || rating || job.rating) >= star ? '#ffc107' : '#333', 
+                        style={{
+                            cursor: 'pointer',
+                            color: (hover || rating || job.rating) >= star ? '#ffc107' : '#333',
                             fontSize: '1.7rem',
                             transition: 'transform 0.2s ease',
                             transform: (hover === star) ? 'scale(1.2)' : 'scale(1)'
-                        }}>
+                        }}
+                    >
                         ★
                     </span>
                 ))}
@@ -226,9 +255,9 @@ const JobCard = memo(({ job, user, onApply }) => {
             </div>
 
             <div style={styles.buttonGroup}>
-                <button 
-                    style={styles.saveBtn} 
-                    onClick={toggleSave} 
+                <button
+                    style={styles.saveBtn}
+                    onClick={toggleSave}
                     disabled={saving}
                 >
                     {saving ? '⏳...' : saved ? '🗑️ Unsave' : '📌 Save Job'}
@@ -236,6 +265,44 @@ const JobCard = memo(({ job, user, onApply }) => {
                 <button style={styles.applyBtn} onClick={() => onApply(job)}>
                     📝 Apply Now
                 </button>
+            </div>
+
+            {/* ✅ የስራውን ትክክለኛነት ፈትሽ — አሁን return ውስጥ ትክክለኛ ቦታ ላይ ነው */}
+            <div style={{ marginTop: '10px' }}>
+                <button
+                    type="button"
+                    onClick={checkAuthenticity}
+                    disabled={checkingFake}
+                    style={{
+                        background: '#f39c12',
+                        color: '#fff',
+                        border: 'none',
+                        padding: '8px 15px',
+                        borderRadius: '5px',
+                        cursor: checkingFake ? 'not-allowed' : 'pointer',
+                        fontWeight: 'bold',
+                        opacity: checkingFake ? 0.7 : 1
+                    }}
+                >
+                    {checkingFake ? '⏳ በመፈተሽ ላይ...' : '🔍 የስራውን ትክክለኛነት ፈትሽ'}
+                </button>
+
+                {fakeResult && (
+                    <div style={{
+                        marginTop: '10px',
+                        padding: '10px',
+                        borderRadius: '8px',
+                        background: fakeResult.is_fake
+                            ? 'rgba(231, 76, 60, 0.2)'
+                            : 'rgba(46, 204, 113, 0.2)',
+                        border: `1px solid ${fakeResult.is_fake ? '#e74c3c' : '#2ecc71'}`,
+                        color: fakeResult.is_fake ? '#e74c3c' : '#2ecc71'
+                    }}>
+                        <strong>{fakeResult.message}</strong>
+                        <br />
+                        <small>Confidence: {fakeResult.confidence}%</small>
+                    </div>
+                )}
             </div>
         </div>
     );

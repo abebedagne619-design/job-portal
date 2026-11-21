@@ -22,7 +22,7 @@ const JobAlerts = ({ user }) => {
         setLoading(true);
         try {
             // ✅ Token ከ localStorage አምጣ
-            const token = localStorage.getItem('token');
+            const token = sessionStorage.getItem('token');
             
             console.log('📤 Sending alert:', { keyword, location, type: jobType });
             console.log('🔑 Token:', token ? 'Exists' : 'Missing!');

@@ -1,372 +1,1135 @@
-import React, { useState, useEffect, useRef } from 'react';
+
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import io from 'socket.io-client';
+import { useLanguage } from '../context/LanguageContext';
+
+const BASE_URL = 'http://localhost:5000';
+const API_URL = `${BASE_URL}/api/messages`;
 
 const Messages = ({ user, setCurrentPage }) => {
+    const { language } = useLanguage();
+    const isAmharic = language === 'am';
+
+    const text = (en, am) => isAmharic ? am : en;
+
     const [conversations, setConversations] = useState([]);
+    const [allUsers, setAllUsers] = useState([]);
     const [selectedUser, setSelectedUser] = useState(null);
     const [messages, setMessages] = useState([]);
     const [newMessage, setNewMessage] = useState('');
+
+    const [loading, setLoading] = useState(false);
+    const [sending, setSending] = useState(false);
+    const [socketConnected, setSocketConnected] = useState(false);
+
+    const [error, setError] = useState('');
     const [isMinimized, setIsMinimized] = useState(false);
+    const [isMaximized, setIsMaximized] = useState(false);
     const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-    
-    const [allUsers, setAllUsers] = useState([]); 
+
     const [showSearch, setShowSearch] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
 
-    // ✅ ላኪ ለመምረጥ የተጨመሩ ስቴቶች
-    const [senders, setSenders] = useState([]);
-    const [senderId, setSenderId] = useState('');
-
     const socket = useRef(null);
     const selectedUserRef = useRef(null);
-    const scrollRef = useRef();
-    const BASE_URL = 'http://localhost:5000';
-    const API_URL = `${BASE_URL}/api/messages`;
+    const scrollRef = useRef(null);
 
-    // ✅ selectedUser ሲቀየር ለ Socket ማሳወቅ (Socket እንዳይዘጋ)
     useEffect(() => {
         selectedUserRef.current = selectedUser;
     }, [selectedUser]);
 
-    // 1. Socket.io ግንኙነት (አንድ ጊዜ ብቻ ይፈጠራል)
+    // =====================================
+    // AUTHENTICATION HEADERS
+    // =====================================
+
+    const getAuthHeaders = useCallback(() => {
+        const token = sessionStorage.getItem('token');
+
+        return {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {})
+        };
+    }, []);
+
+    // =====================================
+    // NORMALIZE MESSAGE DATA
+    // =====================================
+
+    const normalizeMessage = useCallback((msg) => ({
+        ...msg,
+        id: msg.id,
+        sender_id: msg.sender_id ?? msg.senderId,
+        receiver_id: msg.receiver_id ?? msg.receiverId,
+        created_at: msg.created_at ?? msg.createdAt,
+        is_read: Boolean(msg.is_read ?? msg.isRead)
+    }), []);
+
+    // =====================================
+    // FETCH CONVERSATIONS
+    // =====================================
+
+    const fetchConversations = useCallback(async () => {
+        if (!user?.id) return;
+
+        try {
+            const response = await fetch(
+                `${API_URL}/conversations/${user.id}`,
+                {
+                    method: 'GET',
+                    headers: getAuthHeaders()
+                }
+            );
+
+            const result = await response.json();
+
+            if (!response.ok) {
+                throw new Error(result.message || 'Failed to load conversations');
+            }
+
+            setConversations(
+                Array.isArray(result.data) ? result.data : []
+            );
+
+        } catch (err) {
+            console.error('Fetch conversations error:', err);
+            setError(text('Could not load conversations.', 'ውይይቶችን መጫን አልተቻለም።'));
+        }
+    }, [user, getAuthHeaders, isAmharic]);
+
+    // =====================================
+    // FETCH USERS
+    // =====================================
+
+    const fetchUsers = useCallback(async () => {
+        try {
+            const response = await fetch(
+                `${BASE_URL}/api/users`,
+                {
+                    method: 'GET',
+                    headers: getAuthHeaders()
+                }
+            );
+
+            const result = await response.json();
+
+            if (!response.ok) {
+                throw new Error(result.message || 'Failed to load users');
+            }
+
+            setAllUsers(
+                Array.isArray(result.data) ? result.data : []
+            );
+
+        } catch (err) {
+            console.error('Fetch users error:', err);
+        }
+    }, [getAuthHeaders]);
+
+    // =====================================
+    // FETCH CHAT MESSAGES
+    // =====================================
+
+    const fetchMessages = useCallback(async (otherUser) => {
+        if (!user?.id || !otherUser?.other_user_id) return;
+
+        try {
+            setLoading(true);
+            setError('');
+
+            const response = await fetch(
+                `${API_URL}/${user.id}/${otherUser.other_user_id}`,
+                {
+                    method: 'GET',
+                    headers: getAuthHeaders()
+                }
+            );
+
+            const result = await response.json();
+
+            if (!response.ok) {
+                throw new Error(result.message || 'Failed to load messages');
+            }
+
+            const messageList = Array.isArray(result.data)
+                ? result.data
+                : [];
+
+            setMessages(messageList.map(normalizeMessage));
+
+            // Mark messages as read.
+            socket.current?.emit('mark-read', {
+                otherUserId: otherUser.other_user_id
+            });
+
+            await fetchConversations();
+
+        } catch (err) {
+            console.error('Fetch messages error:', err);
+            setError(text('Could not load messages.', 'መልዕክቶችን መጫን አልተቻለም።'));
+            setMessages([]);
+        } finally {
+            setLoading(false);
+        }
+    }, [user, getAuthHeaders, normalizeMessage, fetchConversations, isAmharic]);
+
+    // =====================================
+    // SOCKET.IO CONNECTION
+    // =====================================
+
     useEffect(() => {
         if (!user?.id) return;
 
-        socket.current = io('http://localhost:5000');
-        
-        socket.current.emit('user-connected', user.id);
-        
-        const handleNewMessage = (data) => {
-            const currentSelected = selectedUserRef.current;
-            
-            // ✅ መልእክቱ ከከፈትከው ሰው ጋር የሚዛመድ ከሆነ ብቻ አሳይ
-            if (currentSelected && (String(currentSelected.other_user_id) === String(data.senderId) || String(currentSelected.other_user_id) === String(data.receiverId))) {
-                setMessages((prev) => {
-                    if (prev.some(m => m.id === data.id)) return prev;
-                    
-                    const withoutTemp = prev.filter(m => !String(m.id).startsWith('temp-'));
-                    return [...withoutTemp, {
-                        id: data.id,
-                        sender_id: data.senderId,
-                        message: data.message,
-                        created_at: data.createdAt
-                    }];
-                });
-            }
+        const token = sessionStorage.getItem('token');
+
+        if (!token) {
+            setError(text('Authentication token not found. Please log in again.', 'የመግቢያ Token አልተገኘም። እንደገና ይግቡ።'));
+            return;
+        }
+
+        const newSocket = io(BASE_URL, {
+            transports: ['websocket', 'polling'],
+            reconnection: true,
+            reconnectionAttempts: 5,
+            reconnectionDelay: 1000,
+            auth: { token }
+        });
+
+        socket.current = newSocket;
+
+        newSocket.on('connect', () => {
+            console.log('Messages socket connected:', newSocket.id);
+            setSocketConnected(true);
+            setError('');
+        });
+
+        newSocket.on('disconnect', () => {
+            setSocketConnected(false);
+        });
+
+        newSocket.on('connect_error', (err) => {
+            console.error('Messages socket error:', err.message);
+            setSocketConnected(false);
+            setError(text(
+                'Connection problem. Please check your server and login.',
+                'የግንኙነት ችግር አለ። Server እና Login ያረጋግጡ።'
+            ));
+        });
+
+        // Receive new messages.
+        newSocket.on('new-message', (data) => {
+            console.log('NEW MESSAGE RECEIVED:', data);
+            const incoming = normalizeMessage(data);
+            const currentChat = selectedUserRef.current;
+            console.log('CURRENT CHAT:', currentChat);
+            console.log('CURRENT USER ID:', user.id);
+
+            if (currentChat) {
+    const senderId = String(incoming.sender_id);
+    const receiverId = String(incoming.receiver_id);
+    const currentUserId = String(user.id);
+    const otherUserId = String(currentChat.other_user_id);
+
+    const belongsToCurrentChat =
+        (senderId === currentUserId && receiverId === otherUserId) ||
+        (senderId === otherUserId && receiverId === currentUserId);
+
+    console.log('MESSAGE ROUTING CHECK:', {
+        incomingSender: senderId,
+        incomingReceiver: receiverId,
+        currentUser: currentUserId,
+        selectedChatUser: otherUserId,
+        belongsToCurrentChat
+    });
+
+    if (belongsToCurrentChat) {
+        setMessages(previous => {
+            const alreadyExists = previous.some(
+                msg => String(msg.id) === String(incoming.id)
+            );
+
+            if (alreadyExists) return previous;
+
+            return [...previous, incoming];
+        });
+
+        if (senderId === otherUserId) {
+            newSocket.emit('mark-read', {
+                otherUserId: currentChat.other_user_id
+            });
+        }
+    }
+}
+
             fetchConversations();
-        };
+        });
 
-        socket.current.on('new-message', handleNewMessage);
+        newSocket.on('message-sent', (result) => {
+    console.log('MESSAGE SENT ACK RECEIVED:', result);
 
+    if (result?.success) {
+        setSending(false);
+        setError('');
+        fetchConversations();
+    }
+});
+
+newSocket.on('message-error', (result) => {
+    console.error('MESSAGE ERROR RECEIVED:', result);
+
+    setSending(false);
+    setError(
+        result?.message ||
+        text('Message could not be sent.', 'መልዕክቱን መላክ አልተቻለም።')
+    );
+});
         return () => {
-            socket.current.off('new-message', handleNewMessage);
-            socket.current.disconnect();
+            newSocket.removeAllListeners();
+            newSocket.disconnect();
+
+            if (socket.current === newSocket) {
+                socket.current = null;
+            }
+
+            setSocketConnected(false);
         };
-    }, [user?.id]);
+    }, [user, normalizeMessage, fetchConversations, isAmharic]);
 
-    const fetchConversations = async () => {
-        if (!user?.id) return;
-        try {
-            const res = await fetch(`${API_URL}/conversations/${user.id}`);
-            if (res.ok) {
-                const data = await res.json();
-                setConversations(data);
-            }
-        } catch (err) {
-            console.error('❌ Error fetching conversations:', err);
-        }
-    };
-
-    const fetchAllUsers = async () => {
-        if (!user?.id) return;
-        try {
-            const res = await fetch(`${BASE_URL}/api/users`);
-            if (res.ok) {
-                const data = await res.json();
-                const otherUsers = data.filter(u => String(u.id) !== String(user.id));
-                setAllUsers(otherUsers);
-                
-                const allPossibleSenders = [user, ...otherUsers];
-                setSenders(allPossibleSenders);
-                setSenderId(user.id);
-            }
-        } catch (err) {
-            console.error('❌ Error fetching all users:', err);
-        }
-    };
+    // =====================================
+    // INITIAL DATA
+    // =====================================
 
     useEffect(() => {
         if (user?.id) {
             fetchConversations();
-            fetchAllUsers();
+            fetchUsers();
         }
-    }, [user?.id]);
+    }, [user, fetchConversations, fetchUsers]);
 
-    // የተመረጠውን ሰው መልእክቶች ማምጣት
-    useEffect(() => {
-        const fetchMessages = async () => {
-            if (!selectedUser || !user?.id) return;
-            try {
-                const res = await fetch(`${API_URL}/${user.id}/${selectedUser.other_user_id}`);
-                if (res.ok) {
-                    const data = await res.json();
-                    setMessages(data);
-                    fetchConversations();
-                }
-            } catch (err) {
-                console.error('❌ Error fetching messages:', err);
-            }
-        };
-        fetchMessages();
-    }, [selectedUser, user?.id]);
-
-    // መልእክት መላክ
-    const handleSendMessage = async (e) => {
-        e.preventDefault();
-        if (!newMessage.trim() || !selectedUser) return;
-
-        const actualSenderId = senderId || user.id;
-
-        const messageData = {
-            senderId: actualSenderId,
-            receiverId: selectedUser.other_user_id,
-            message: newMessage
-        };
-
-        socket.current.emit('send-message', messageData);
-
-        const tempId = `temp-${Date.now()}`;
-        setMessages(prev => [...prev, {
-            id: tempId,
-            sender_id: actualSenderId,
-            message: newMessage,
-            created_at: new Date()
-        }]);
-
-        setNewMessage('');
-    };
+    // =====================================
+    // SCROLL TO LATEST MESSAGE
+    // =====================================
 
     useEffect(() => {
-        scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
+        if (scrollRef.current) {
+            scrollRef.current.scrollIntoView({
+                behavior: 'smooth',
+                block: 'end'
+            });
+        }
     }, [messages]);
 
-    const openChat = (conv) => {
-        setSelectedUser(conv);
-        setShowSearch(false); 
-    };
+    // =====================================
+    // OPEN CONVERSATION
+    // =====================================
 
-    const startNewChat = (usr) => {
-        const formattedUser = {
-            other_user_id: usr.id,
-            other_user_name: usr.name,
-            other_user_role: usr.role
-        };
-        setSelectedUser(formattedUser);
+    const openConversation = (conversation) => {
+        setSelectedUser(conversation);
+        setMessages([]);
+        setError('');
         setShowSearch(false);
         setSearchTerm('');
     };
 
-    const toggleMinimize = () => setIsMinimized(!isMinimized);
-    const toggleSidebar = () => setIsSidebarCollapsed(!isSidebarCollapsed);
+    useEffect(() => {
+        if (selectedUser) {
+            fetchMessages(selectedUser);
+        }
+    }, [selectedUser, fetchMessages]);
 
-    const styles = {
-        container: { padding: isMinimized ? '0' : '20px', height: isMinimized ? 'auto' : 'calc(100vh - 20px)', transition: 'all 0.3s ease' },
-        header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: isMinimized ? '0' : '15px', padding: isMinimized ? '10px 15px' : '0', background: isMinimized ? '#0a2a0a' : 'transparent', borderRadius: isMinimized ? '10px' : '0', cursor: isMinimized ? 'pointer' : 'default' },
-        title: { color: '#2ecc71', margin: 0, fontSize: isMinimized ? '1rem' : '1.8rem' },
-        minimizeBtn: { padding: '5px 12px', background: '#2ecc71', color: '#000', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: isMinimized ? '0.8rem' : '1rem' },
-        chatContainer: { display: isMinimized ? 'none' : 'flex', height: '80vh', background: '#0a1a0a', color: '#fff', borderRadius: '15px', overflow: 'hidden', border: '1px solid #2ecc71' },
-        sidebar: { width: isSidebarCollapsed ? '60px' : '30%', minWidth: isSidebarCollapsed ? '60px' : '250px', borderRight: '1px solid #2ecc71', overflowY: 'auto', background: 'rgba(20,40,20,0.8)', transition: 'width 0.3s ease' },
-        sidebarHeader: { padding: isSidebarCollapsed ? '15px 10px' : '15px', borderBottom: '1px solid #2ecc71', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' },
-        sidebarTitle: { display: isSidebarCollapsed ? 'none' : 'block', fontWeight: 'bold', color: '#2ecc71' },
-        toggleBtn: { background: 'transparent', border: 'none', color: '#2ecc71', cursor: 'pointer', fontSize: '1.2rem' },
-        userItem: (isSelected) => ({ padding: isSidebarCollapsed ? '15px 10px' : '15px', cursor: 'pointer', borderBottom: '1px solid #1a331a', background: isSelected ? '#2ecc7133' : 'transparent', display: 'flex', justifyContent: 'space-between', alignItems: 'center', textAlign: isSidebarCollapsed ? 'center' : 'left', flexDirection: isSidebarCollapsed ? 'column' : 'row', gap: isSidebarCollapsed ? '5px' : '0' }),
-        userName: { fontWeight: 'bold', fontSize: isSidebarCollapsed ? '0.7rem' : '1rem', wordBreak: 'break-word' },
-        lastMessage: { fontSize: '0.7rem', color: '#aaa', display: isSidebarCollapsed ? 'none' : 'block', marginTop: '3px' },
-        unreadBadge: { background: '#e74c3c', color: '#fff', padding: isSidebarCollapsed ? '2px 4px' : '2px 8px', borderRadius: '50%', fontSize: isSidebarCollapsed ? '0.6rem' : '0.7rem', minWidth: '18px', textAlign: 'center' },
-        chatWindow: { width: isSidebarCollapsed ? 'calc(100% - 60px)' : '70%', display: 'flex', flexDirection: 'column', background: 'rgba(10,20,10,0.9)', transition: 'width 0.3s ease' },
-        chatHeader: { padding: '15px', borderBottom: '1px solid #2ecc71', fontWeight: 'bold', background: 'rgba(0,0,0,0.3)' },
-        messageBox: { flex: 1, padding: '20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '10px' },
-        bubble: (isMine) => ({ alignSelf: isMine ? 'flex-end' : 'flex-start', background: isMine ? '#2ecc71' : '#333', color: isMine ? '#000' : '#fff', padding: '10px 15px', borderRadius: '18px', maxWidth: '70%', wordWrap: 'break-word' }),
-        senderName: { fontSize: '0.7rem', fontWeight: 'bold', opacity: 0.8, marginBottom: '3px', color: 'inherit' },
-        time: { fontSize: '0.6rem', marginTop: '5px', opacity: 0.7, textAlign: 'right' },
-        inputArea: { padding: '20px', display: 'flex', gap: '10px', borderTop: '1px solid #2ecc71', alignItems: 'center' },
-        input: { flex: 1, padding: '10px', borderRadius: '25px', border: '1px solid #2ecc71', background: '#000', color: '#fff', outline: 'none' },
-        sendBtn: { padding: '10px 20px', background: '#2ecc71', border: 'none', borderRadius: '25px', color: '#000', cursor: 'pointer', fontWeight: 'bold' },
-        closeBtn: { padding: '8px 15px', background: '#e74c3c', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px' },
-        minimizedPreview: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 15px', background: '#0a2a0a', borderRadius: '10px', color: '#fff' },
-        minimizedStats: { fontSize: '0.8rem', color: '#aaa' },
-        emptyState: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666', flexDirection: 'column', gap: '10px' }
+    // =====================================
+    // START NEW CHAT
+    // =====================================
+
+    const startNewChat = (person) => {
+        const newConversation = {
+            other_user_id: person.id,
+            other_user_name: person.name,
+            other_user_role: person.role
+        };
+
+        setSelectedUser(newConversation);
+        setMessages([]);
+        setShowSearch(false);
+        setSearchTerm('');
+        setError('');
     };
 
-    if (isMinimized) {
-        const totalUnread = conversations.reduce((sum, conv) => sum + (conv.unread_count || 0), 0);
+    // =====================================
+    // SEND MESSAGE
+    // =====================================
+
+    const handleSendMessage = (e) => {
+        e.preventDefault();
+
+        const message = newMessage.trim();
+
+        if (!message || !selectedUser || sending) return;
+
+        if (!socket.current?.connected) {
+            setError(text(
+                'Not connected. Please wait and try again.',
+                'ግንኙነት የለም። እባክዎ ትንሽ ይጠብቁና እንደገና ይሞክሩ።'
+            ));
+            return;
+        }
+
+        console.log('SENDING MESSAGE DEBUG:', {
+    currentUserId: user.id,
+    selectedUser,
+    receiverId: selectedUser.other_user_id,
+    message
+});
+
+        setSending(true);
+        setError('');
+
+        socket.current.emit('send-message', {
+            receiverId: selectedUser.other_user_id,
+            message
+        });
+
+        setNewMessage('');
+    };
+
+    // =====================================
+    // FILTER USERS
+    // =====================================
+
+    const filteredUsers = allUsers.filter(person => {
+        const search = searchTerm.toLowerCase();
+
         return (
-            <div style={styles.container}>
-                <div style={styles.header} onClick={toggleMinimize}>
-                    <h3 style={styles.title}>💬 Messages</h3>
-                    <button type="button" style={styles.minimizeBtn}>Maximize</button>
-                </div>
-                <div style={styles.minimizedPreview}>
-                    <span>📨 {conversations.length} conversations</span>
-                    {totalUnread > 0 && <span style={styles.minimizedStats}>{totalUnread} unread messages</span>}
-                </div>
+            person.name?.toLowerCase().includes(search) ||
+            person.email?.toLowerCase().includes(search) ||
+            person.role?.toLowerCase().includes(search)
+        );
+    });
+
+    // =====================================
+    // FORMAT TIME
+    // =====================================
+
+    const formatTime = (date) => {
+        if (!date) return '';
+
+        const parsedDate = new Date(date);
+
+        if (Number.isNaN(parsedDate.getTime())) return '';
+
+        return parsedDate.toLocaleTimeString(
+            isAmharic ? 'am-ET' : 'en-US',
+            {
+                hour: '2-digit',
+                minute: '2-digit'
+            }
+        );
+    };
+
+    // =====================================
+    // LOGIN CHECK
+    // =====================================
+
+    if (!user) {
+        return (
+            <div style={styles.centerMessage}>
+                {text('Please log in to view messages.', 'መልዕክቶችን ለማየት እባክዎ ይግቡ።')}
             </div>
         );
     }
 
-    if (!user) {
-        return <div style={{color: '#2ecc71', textAlign: 'center', padding: '5rem'}}>Please login to see messages.</div>;
+    // =====================================
+    // MINIMIZED VIEW
+    // =====================================
+
+    if (isMinimized) {
+        return (
+            <div style={styles.minimized} onClick={() => setIsMinimized(false)}>
+                <span>💬 {text('Messages', 'መልዕክቶች')}</span>
+                <button style={styles.smallButton}>
+                    {text('Open', 'ክፈት')}
+                </button>
+            </div>
+        );
     }
 
+    // =====================================
+    // MAIN UI
+    // =====================================
+
     return (
-        <div style={styles.container}>
+        <div
+    style={{
+        ...styles.container,
+        ...(isMaximized ? styles.maximized : {})
+    }}
+>
+
+            {/* HEADER */}
             <div style={styles.header}>
-                <h2 style={styles.title}>💬 Messages</h2>
-                <div style={{ display: 'flex', gap: '10px' }}>
-                    <button type="button" style={styles.minimizeBtn} onClick={toggleMinimize}>Minimize</button>
-                    <button type="button" style={styles.closeBtn} onClick={() => setCurrentPage('jobs')}>✕ Close</button>
+                <div>
+                    <h2 style={styles.headerTitle}>
+                        💬 {text('Messages', 'መልዕክቶች')}
+                    </h2>
+
+                    <span style={styles.connection}>
+                        <span style={{
+                            ...styles.statusDot,
+                            background: socketConnected ? '#22c55e' : '#ef4444'
+                        }} />
+                        {socketConnected
+                            ? text('Connected', 'ተገናኝቷል')
+                            : text('Connecting...', 'በመገናኘት ላይ...')}
+                    </span>
                 </div>
+
+                
+<div style={styles.headerActions}>
+    <button
+        style={styles.headerButton}
+        onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+        title={text('Toggle conversations', 'ውይይቶችን ቀይር')}
+    >
+        ☰
+    </button>
+
+    {/* MINIMIZE */}
+    <button
+        style={styles.headerButton}
+        onClick={() => setIsMinimized(true)}
+        title={text('Minimize', 'አሳንስ')}
+    >
+        −
+    </button>
+
+    {/* MAXIMIZE / RESTORE */}
+    <button
+        style={styles.headerButton}
+        onClick={() => setIsMaximized(prev => !prev)}
+        title={isMaximized
+            ? text('Restore', 'ወደ ቀድሞ መጠን መልስ')
+            : text('Maximize', 'ሙሉ ስክሪን አድርግ')}
+    >
+        {isMaximized ? '❐' : '□'}
+    </button>
+
+    {/* CLOSE */}
+    <button
+        style={styles.headerButton}
+        onClick={() => setCurrentPage('dashboard')}
+        title={text('Close', 'ዝጋ')}
+    >
+        ✕
+    </button>
+</div>
+
             </div>
 
-            <div style={styles.chatContainer}>
-                <div style={styles.sidebar}>
-                    <div style={styles.sidebarHeader} onClick={toggleSidebar}>
-                        <span style={styles.sidebarTitle}>📋 Conversations</span>
-                        <button type="button" style={styles.toggleBtn}>
-                            {isSidebarCollapsed ? '▶' : '◀'}
-                        </button>
-                    </div>
+            {/* ERROR */}
+            {error && (
+                <div style={styles.error}>
+                    {error}
+                    <button
+                        onClick={() => setError('')}
+                        style={styles.errorClose}
+                    >
+                        ×
+                    </button>
+                </div>
+            )}
 
-                    {!isSidebarCollapsed && (
-                        <div style={{ padding: '10px', borderBottom: '1px solid #1a331a' }}>
-                            <button 
-                                type="button" 
-                                onClick={() => setShowSearch(!showSearch)}
-                                style={{ width: '100%', padding: '8px', background: '#2ecc71', color: '#000', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}
+            <div style={styles.main}>
+
+                {/* SIDEBAR */}
+                {!isSidebarCollapsed && (
+                    <div style={styles.sidebar}>
+
+                        <div style={styles.sidebarHeader}>
+                            <h3 style={styles.sectionTitle}>
+                                {text('Conversations', 'ውይይቶች')}
+                            </h3>
+
+                            <button
+                                style={styles.newChatButton}
+                                onClick={() => {
+                                    setShowSearch(!showSearch);
+                                    setSearchTerm('');
+                                }}
                             >
-                                {showSearch ? '✕ Cancel' : '➕ New Chat'}
+                                {showSearch
+                                    ? text('Cancel', 'ይቅር')
+                                    : text('+ New Chat', '+ አዲስ ውይይት')}
                             </button>
-                            
-                            {showSearch && (
-                                <div style={{ marginTop: '10px' }}>
-                                    <input 
-                                        type="text" 
-                                        placeholder="Search people..." 
-                                        value={searchTerm}
-                                        onChange={(e) => setSearchTerm(e.target.value)}
-                                        style={{ width: '100%', padding: '8px', borderRadius: '5px', border: 'none', background: '#0a2a0a', color: '#fff' }}
-                                    />
-                                    <div style={{ maxHeight: '200px', overflowY: 'auto', marginTop: '5px', background: '#111', borderRadius: '5px' }}>
-                                        {allUsers.filter(u => u.name.toLowerCase().includes(searchTerm.toLowerCase())).map(usr => (
-                                            <div 
-                                                key={usr.id} 
-                                                onClick={() => startNewChat(usr)}
-                                                style={{ padding: '10px', cursor: 'pointer', borderBottom: '1px solid #333', color: '#fff' }}
-                                            >
-                                                <div style={{ fontWeight: 'bold' }}>{usr.name}</div>
-                                                <div style={{ fontSize: '0.7rem', color: '#aaa' }}>{usr.role}</div>
+                        </div>
+
+                        {/* USER SEARCH */}
+                        {showSearch && (
+                            <div style={styles.searchArea}>
+                                <input
+                                    type="text"
+                                    value={searchTerm}
+                                    onChange={e => setSearchTerm(e.target.value)}
+                                    placeholder={text('Search people...', 'ሰዎችን ፈልግ...')}
+                                    style={styles.searchInput}
+                                />
+
+                                <div style={styles.userList}>
+                                    {filteredUsers.map(person => (
+                                        <button
+                                            key={person.id}
+                                            style={styles.userItem}
+                                            onClick={() => startNewChat(person)}
+                                        >
+                                            <div style={styles.avatar}>
+                                                {person.name?.charAt(0)?.toUpperCase() || '?'}
                                             </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    )}
-                    
-                    {conversations.length === 0 ? (
-                        <div style={{ padding: '15px', textAlign: 'center', color: '#aaa' }}>
-                            No conversations yet.<br />Click "New Chat" to start!
-                        </div>
-                    ) : (
-                        conversations.map((conv) => (
-                            <div 
-                                key={conv.other_user_id} 
-                                style={styles.userItem(String(selectedUser?.other_user_id) === String(conv.other_user_id))}
-                                onClick={() => openChat(conv)}
-                            >
-                                <div style={{ textAlign: isSidebarCollapsed ? 'center' : 'left' }}>
-                                    <div style={styles.userName}>
-                                        {isSidebarCollapsed ? conv.other_user_name?.charAt(0) : conv.other_user_name}
-                                    </div>
-                                    {!isSidebarCollapsed && (
-                                        <div style={styles.lastMessage}>
-                                            {conv.last_message?.substring(0, 25)}...
-                                        </div>
+
+                                            <div style={styles.userInfo}>
+                                                <strong>{person.name}</strong>
+                                                <small>{person.role}</small>
+                                            </div>
+                                        </button>
+                                    ))}
+
+                                    {filteredUsers.length === 0 && (
+                                        <p style={styles.emptyText}>
+                                            {text('No users found.', 'ምንም ተጠቃሚ አልተገኘም።')}
+                                        </p>
                                     )}
                                 </div>
-                                {conv.unread_count > 0 && (
-                                    <span style={styles.unreadBadge}>
-                                        {isSidebarCollapsed ? conv.unread_count : conv.unread_count}
-                                    </span>
+                            </div>
+                        )}
+
+                        {/* CONVERSATION LIST */}
+                        {!showSearch && (
+                            <div style={styles.conversationList}>
+                                {conversations.map(conversation => (
+                                    <button
+                                        key={conversation.other_user_id}
+                                        onClick={() => openConversation(conversation)}
+                                        style={{
+                                            ...styles.conversationItem,
+                                            ...(String(selectedUser?.other_user_id) ===
+                                                String(conversation.other_user_id)
+                                                ? styles.activeConversation
+                                                : {})
+                                        }}
+                                    >
+                                        <div style={styles.avatar}>
+                                            {conversation.other_user_name
+                                                ?.charAt(0)?.toUpperCase() || '?'}
+                                        </div>
+
+                                        <div style={styles.userInfo}>
+                                            <strong>{conversation.other_user_name}</strong>
+                                            <small>
+                                                {conversation.last_message || text(
+                                                    'Start a conversation',
+                                                    'ውይይት ይጀምሩ'
+                                                )}
+                                            </small>
+                                        </div>
+                                    </button>
+                                ))}
+
+                                {conversations.length === 0 && (
+                                    <p style={styles.emptyText}>
+                                        {text(
+                                            'No conversations yet. Start a new chat.',
+                                            'እስካሁን ውይይት የለም። አዲስ ውይይት ይጀምሩ።'
+                                        )}
+                                    </p>
                                 )}
                             </div>
-                        ))
-                    )}
-                </div>
+                        )}
+                    </div>
+                )}
 
-                <div style={styles.chatWindow}>
+                {/* CHAT AREA */}
+                <div style={styles.chatArea}>
+
                     {selectedUser ? (
                         <>
+                            {/* CHAT HEADER */}
                             <div style={styles.chatHeader}>
-                                💬 {selectedUser.other_user_name} ({selectedUser.other_user_role})
+                                <div style={styles.avatar}>
+                                    {selectedUser.other_user_name
+                                        ?.charAt(0)?.toUpperCase() || '?'}
+                                </div>
+
+                                <div>
+                                    <strong>{selectedUser.other_user_name}</strong>
+                                    <small style={styles.roleText}>
+                                        {selectedUser.other_user_role || text('User', 'ተጠቃሚ')}
+                                    </small>
+                                </div>
                             </div>
-                            <div style={styles.messageBox}>
-                                {messages.length === 0 ? (
-                                    <div style={styles.emptyState}>
-                                        <span>💬</span>
-                                        <span>No messages yet. Start the conversation!</span>
+
+                            {/* MESSAGES */}
+                            <div style={styles.messageArea}>
+                                {loading ? (
+                                    <p style={styles.emptyText}>
+                                        {text('Loading messages...', 'መልዕክቶች በመጫን ላይ...')}
+                                    </p>
+                                ) : messages.length === 0 ? (
+                                    <div style={styles.emptyChat}>
+                                        <span style={{ fontSize: 40 }}>💬</span>
+                                        <p>
+                                            {text(
+                                                'No messages yet. Say hello!',
+                                                'እስካሁን መልዕክት የለም። ሰላም ይበሉ!'
+                                            )}
+                                        </p>
                                     </div>
                                 ) : (
-                                    messages.map((m, i) => {
-                                        const isMine = String(m.sender_id) === String(senderId);
-                                        const msgSenderName = senders.find(u => String(u.id) === String(m.sender_id))?.name || 'User';
-                                        
+                                    messages.map((msg, index) => {
+                                        const isMine =
+                                            String(msg.sender_id) === String(user.id);
+
                                         return (
-                                            <div key={i} style={styles.bubble(isMine)}>
-                                                <div style={styles.senderName}>
-                                                    👤 {msgSenderName}
-                                                </div>
-                                                {m.message}
-                                                <div style={styles.time}>
-                                                    {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                                </div>
-                                            </div>
+                                  
+<div
+    key={msg.id || index}
+    style={{
+        ...styles.messageRow,
+        justifyContent: isMine ? 'flex-end' : 'flex-start'
+    }}
+>
+    <div
+        style={{
+            ...styles.messageBubble,
+            ...(isMine ? styles.myMessage : styles.theirMessage)
+        }}
+    >
+        {/* SENDER NAME ONLY */}
+        <div style={{
+            fontSize: '11px',
+            fontWeight: 'bold',
+            marginBottom: '5px',
+            color: isMine ? '#166534' : '#475569'
+        }}>
+            {isMine ? 'You' : selectedUser?.other_user_name || 'User'}
+        </div>
+
+        <p style={styles.messageText}>
+    {msg.message}
+</p>
+
+        <small style={styles.messageTime}>
+            {formatTime(msg.created_at)}
+            {isMine && (
+                <span>{msg.is_read ? ' ✓✓' : ' ✓'}</span>
+            )}
+        </small>
+    </div>
+</div>
+
                                         );
                                     })
                                 )}
+
                                 <div ref={scrollRef} />
                             </div>
-                            
-                            <form style={styles.inputArea} onSubmit={handleSendMessage}>
-                                <select 
-                                    value={senderId} 
-                                    onChange={(e) => setSenderId(e.target.value)}
-                                    style={{ padding: '10px', borderRadius: '25px', border: '1px solid #2ecc71', background: '#000', color: '#fff', outline: 'none', maxWidth: '130px' }}
-                                >
-                                    {senders.map(s => (
-                                        <option key={s.id} value={s.id}>From: {s.name}</option>
-                                    ))}
-                                </select>
 
-                                <input 
-                                    style={styles.input}
+                            {/* MESSAGE INPUT */}
+                            <form
+                                onSubmit={handleSendMessage}
+                                style={styles.inputArea}
+                            >
+                                <input
+                                    type="text"
                                     value={newMessage}
-                                    onChange={(e) => setNewMessage(e.target.value)}
-                                    placeholder="Type a message..."
+                                    onChange={e => setNewMessage(e.target.value)}
+                                    placeholder={text(
+                                        'Type your message...',
+                                        'መልዕክትዎን ይጻፉ...'
+                                    )}
+                                    style={styles.messageInput}
+                                    maxLength={5000}
                                 />
-                                <button type="submit" style={styles.sendBtn}>Send</button>
+
+                                <button
+                                    type="submit"
+                                    disabled={!newMessage.trim() || sending}
+                                    style={{
+                                        ...styles.sendButton,
+                                        opacity: !newMessage.trim() || sending ? 0.5 : 1
+                                    }}
+                                >
+                                    {sending
+                                        ? text('Sending...', 'በመላክ ላይ...')
+                                        : text('Send ➤', 'ላክ ➤')}
+                                </button>
                             </form>
                         </>
                     ) : (
-                        <div style={styles.emptyState}>
-                            <span>👈</span>
-                            <span>Select a person or click "New Chat" to start messaging...</span>
+                        <div style={styles.emptyChat}>
+                            <span style={{ fontSize: 55 }}>💬</span>
+                            <h3>
+                                {text('Your Messages', 'የእርስዎ መልዕክቶች')}
+                            </h3>
+                            <p>
+                                {text(
+                                    'Select a conversation or start a new chat.',
+                                    'ውይይት ይምረጡ ወይም አዲስ ውይይት ይጀምሩ።'
+                                )}
+                            </p>
                         </div>
                     )}
                 </div>
             </div>
         </div>
     );
+};
+
+// =====================================
+// STYLES
+// =====================================
+
+const styles = {
+    container: {
+        display: 'flex',
+        flexDirection: 'column',
+        height: 'calc(100vh - 110px)',
+        minHeight: '500px',
+        background: '#ffffff',
+        borderRadius: '12px',
+        overflow: 'hidden',
+        border: '1px solid #e5e7eb',
+        boxShadow: '0 2px 10px rgba(0,0,0,0.05)'
+    },
+    maximized: {
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    width: '100vw',
+    height: '100vh',
+    minHeight: 0,
+    zIndex: 9999,
+    borderRadius: 0,
+    border: 'none',
+    boxShadow: 'none'
+},
+
+    header: {
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: '15px 20px',
+        background: '#1e40af',
+        color: '#ffffff'
+    },
+
+    headerTitle: {
+        margin: 0,
+        fontSize: '20px'
+    },
+
+    connection: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '6px',
+        fontSize: '12px',
+        marginTop: '5px',
+        color: '#dbeafe'
+    },
+
+    statusDot: {
+        width: '8px',
+        height: '8px',
+        borderRadius: '50%'
+    },
+
+    headerActions: {
+        display: 'flex',
+        gap: '8px'
+    },
+
+    headerButton: {
+        background: 'rgba(255,255,255,0.15)',
+        border: 'none',
+        color: '#ffffff',
+        padding: '7px 12px',
+        borderRadius: '6px',
+        cursor: 'pointer',
+        fontSize: '18px'
+    },
+
+    main: {
+        display: 'flex',
+        flex: 1,
+        minHeight: 0
+    },
+
+    sidebar: {
+        width: '300px',
+        minWidth: '230px',
+        borderRight: '1px solid #e5e7eb',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden'
+    },
+
+    sidebarHeader: {
+        padding: '15px',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        gap: '8px',
+        borderBottom: '1px solid #e5e7eb'
+    },
+
+    sectionTitle: {
+        margin: 0,
+        fontSize: '16px',
+        color: '#1f2937'
+    },
+
+    newChatButton: {
+        border: 'none',
+        background: '#2563eb',
+        color: '#ffffff',
+        padding: '8px 10px',
+        borderRadius: '6px',
+        cursor: 'pointer',
+        fontSize: '12px'
+    },
+
+    conversationList: {
+        overflowY: 'auto',
+        flex: 1
+    },
+
+    conversationItem: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '12px',
+        width: '100%',
+        padding: '13px',
+        border: 'none',
+        borderBottom: '1px solid #f1f5f9',
+        background: '#ffffff',
+        textAlign: 'left',
+        cursor: 'pointer'
+    },
+
+    activeConversation: {
+        background: '#eff6ff'
+    },
+
+    avatar: {
+        width: '42px',
+        height: '42px',
+        minWidth: '42px',
+        borderRadius: '50%',
+        background: '#dbeafe',
+        color: '#1d4ed8',
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        fontWeight: 'bold',
+        fontSize: '17px'
+    },
+
+    userInfo: {
+        display: 'flex',
+        flexDirection: 'column',
+        minWidth: 0,
+        gap: '5px',
+        color: '#1f2937',
+        overflow: 'hidden'
+    },
+
+    searchArea: {
+        padding: '12px',
+        overflowY: 'auto'
+    },
+
+    searchInput: {
+        width: '100%',
+        boxSizing: 'border-box',
+        padding: '11px',
+        border: '1px solid #d1d5db',
+        borderRadius: '7px',
+        outline: 'none'
+    },
+
+    userList: {
+        marginTop: '10px'
+    },
+
+    userItem: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '10px',
+        width: '100%',
+        padding: '10px',
+        border: 'none',
+        borderBottom: '1px solid #eee',
+        background: '#fff',
+        cursor: 'pointer',
+        textAlign: 'left'
+    },
+
+    chatArea: {
+        display: 'flex',
+        flexDirection: 'column',
+        flex: 1,
+        minWidth: 0
+    },
+
+    chatHeader: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '12px',
+        padding: '12px 18px',
+        borderBottom: '1px solid #e5e7eb',
+        color: '#1f2937'
+    },
+
+    roleText: {
+        display: 'block',
+        color: '#6b7280',
+        fontSize: '12px',
+        marginTop: '4px'
+    },
+
+    messageArea: {
+        flex: 1,
+        overflowY: 'auto',
+        padding: '20px',
+        background: '#f8fafc'
+    },
+
+    messageRow: {
+        display: 'flex',
+        marginBottom: '12px'
+    },
+
+    messageBubble: {
+        maxWidth: '75%',
+        padding: '10px 14px',
+        borderRadius: '12px',
+        overflowWrap: 'anywhere'
+    },
+
+    myMessage: {
+        background: '#2563eb',
+        color: '#ffffff',
+        borderBottomRightRadius: '3px'
+    },
+
+    theirMessage: {
+    background: '#7c3aed',
+    backgroundColor: '#7c3aed',
+    color: '#ffffff',
+    border: '2px solid #6d28d9',
+    borderBottomLeftRadius: '3px'
+},
+    messageText: {
+        margin: 0,
+        whiteSpace: 'pre-wrap',
+        lineHeight: 1.5
+    },
+
+    messageTime: {
+        display: 'block',
+        textAlign: 'right',
+        fontSize: '10px',
+        marginTop: '5px',
+        opacity: 0.75
+    },
+
+    inputArea: {
+        display: 'flex',
+        gap: '10px',
+        padding: '14px',
+        borderTop: '1px solid #e5e7eb',
+        background: '#ffffff'
+    },
+
+    messageInput: {
+        flex: 1,
+        minWidth: 0,
+        padding: '12px',
+        border: '1px solid #d1d5db',
+        borderRadius: '8px',
+        outline: 'none',
+        fontSize: '14px'
+    },
+
+    sendButton: {
+        padding: '10px 18px',
+        border: 'none',
+        borderRadius: '8px',
+        background: '#2563eb',
+        color: '#ffffff',
+        cursor: 'pointer',
+        fontWeight: 'bold'
+    },
+
+    emptyChat: {
+        flex: 1,
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'center',
+        alignItems: 'center',
+        color: '#6b7280',
+        textAlign: 'center',
+        padding: '20px'
+    },
+
+    emptyText: {
+        color: '#9ca3af',
+        textAlign: 'center',
+        padding: '15px',
+        fontSize: '13px'
+    },
+
+    error: {
+        padding: '10px 15px',
+        background: '#fee2e2',
+        color: '#991b1b',
+        fontSize: '13px',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center'
+    },
+
+    errorClose: {
+        border: 'none',
+        background: 'transparent',
+        fontSize: '18px',
+        cursor: 'pointer',
+        color: '#991b1b'
+    },
+
+    centerMessage: {
+        padding: '40px',
+        textAlign: 'center',
+        color: '#6b7280'
+    },
+
+    minimized: {
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: '15px',
+        background: '#1e40af',
+        color: '#ffffff',
+        borderRadius: '8px',
+        cursor: 'pointer'
+    },
+
+    smallButton: {
+        background: '#ffffff',
+        color: '#1e40af',
+        border: 'none',
+        padding: '7px 12px',
+        borderRadius: '5px',
+        cursor: 'pointer'
+    }
 };
 
 export default Messages;

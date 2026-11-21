@@ -17,8 +17,8 @@ const AuthSuccess = () => {
                 const user = JSON.parse(decodeURIComponent(userParam));
                 
                 // 3. መረጃውን በ localStorage ውስጥ እናስቀምጣለን (App.jsx እንዲያነበው)
-                localStorage.setItem('token', token);
-                localStorage.setItem('user', JSON.stringify(user));
+                sessionStorage.setItem('token', token);
+                sessionStorage.setItem('user', JSON.stringify(user));
                 
                 console.log("Login successful! Redirecting to home...");
 

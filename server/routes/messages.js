@@ -1,13 +1,19 @@
+
 const express = require('express');
 const router = express.Router();
 const mysql = require('mysql2');
+const jwt = require('jsonwebtoken');
+
+// ==========================================
+// DATABASE CONNECTION
+// ==========================================
 
 const pool = mysql.createPool({
     host: process.env.DB_HOST || '127.0.0.1',
     user: process.env.DB_USER || 'root',
     password: process.env.DB_PASSWORD || '',
     database: process.env.DB_NAME || 'jobportal',
-    port: parseInt(process.env.DB_PORT) || 3307,
+    port: parseInt(process.env.DB_PORT, 10) || 3307,
     waitForConnections: true,
     charset: 'utf8mb4',
     connectionLimit: 10
@@ -15,124 +21,428 @@ const pool = mysql.createPool({
 
 const promisePool = pool.promise();
 
-// ============= GET CONVERSATIONS =============
+const JWT_SECRET =
+    process.env.JWT_SECRET || 'jobportal_secret_key_2024';
+
+// ==========================================
+// AUTHENTICATION MIDDLEWARE
+// ==========================================
+
+const authenticateUser = async (req, res, next) => {
+    try {
+        const authHeader = req.headers.authorization;
+
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            return res.status(401).json({
+                success: false,
+                message: 'Authentication token is required.'
+            });
+        }
+
+        const token = authHeader.substring(7).trim();
+
+        if (!token) {
+            return res.status(401).json({
+                success: false,
+                message: 'Authentication token is missing.'
+            });
+        }
+
+        const decoded = jwt.verify(token, JWT_SECRET);
+
+        const userId = decoded?.id || decoded?.userId;
+
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid authentication token.'
+            });
+        }
+
+        const [users] = await promisePool.query(
+            `SELECT id, name, email, role
+             FROM users
+             WHERE id = ?
+             LIMIT 1`,
+            [userId]
+        );
+
+        if (!users.length) {
+            return res.status(401).json({
+                success: false,
+                message: 'User account not found.'
+            });
+        }
+
+        req.user = users[0];
+
+        next();
+
+    } catch (error) {
+        console.error(
+            'Message authentication error:',
+            error.message
+        );
+
+        return res.status(401).json({
+            success: false,
+            message: 'Invalid or expired token.'
+        });
+    }
+};
+
+// All message routes require authentication.
+router.use(authenticateUser);
+
+// ==========================================
+// GET CONVERSATIONS
+// GET /api/messages/conversations/:userId
+// ==========================================
+
 router.get('/conversations/:userId', async (req, res) => {
     try {
-        const userId = req.params.userId;
-        
-        const [conversations] = await promisePool.query(`
-            SELECT 
-                CASE 
-                    WHEN m.sender_id = ? THEN m.receiver_id
-                    ELSE m.sender_id
-                END as other_user_id,
-                u.name as other_user_name,
-                u.role as other_user_role,
-                (SELECT message FROM messages 
-                 WHERE (sender_id = ? AND receiver_id = other_user_id)
-                    OR (sender_id = other_user_id AND receiver_id = ?)
-                 ORDER BY created_at DESC LIMIT 1) as last_message,
-                (SELECT created_at FROM messages 
-                 WHERE (sender_id = ? AND receiver_id = other_user_id)
-                    OR (sender_id = other_user_id AND receiver_id = ?)
-                 ORDER BY created_at DESC LIMIT 1) as last_message_time,
-                (SELECT COUNT(*) FROM messages 
-                 WHERE sender_id = other_user_id AND receiver_id = ? AND is_read = false) as unread_count
-            FROM messages m
-            JOIN users u ON u.id = CASE 
-                WHEN m.sender_id = ? THEN m.receiver_id
-                ELSE m.sender_id
-            END
-            WHERE m.sender_id = ? OR m.receiver_id = ?
-            GROUP BY other_user_id
-            ORDER BY last_message_time DESC
-        `, [userId, userId, userId, userId, userId, userId, userId, userId, userId]);
+        const userId = req.user.id;
 
-        res.status(200).json(conversations || []);
-    } catch (err) {
-        console.error('❌ Get conversations error:', err);
-        res.status(200).json([]);
-    }
-});
+        if (String(req.params.userId) !== String(userId)) {
+            return res.status(403).json({
+                success: false,
+                message: 'You cannot access another user conversations.'
+            });
+        }
 
-// ============= SEND MESSAGE =============
-router.post('/', async (req, res) => {
-    const { sender_id, receiver_id, message } = req.body;
-    
-    if (!sender_id || !receiver_id || !message) {
-        return res.status(400).json({ error: 'Missing fields' });
-    }
-    
-    try {
-        const [result] = await promisePool.query(
-            'INSERT INTO messages (sender_id, receiver_id, message, is_read) VALUES (?, ?, ?, false)',
-            [sender_id, receiver_id, message]
+        const [conversations] = await promisePool.query(
+            `
+            SELECT
+                conversation.other_user_id,
+                u.name AS other_user_name,
+                u.role AS other_user_role,
+                m.message AS last_message,
+                m.created_at AS last_message_time,
+
+                (
+                    SELECT COUNT(*)
+                    FROM messages unread
+                    WHERE unread.sender_id = conversation.other_user_id
+                    AND unread.receiver_id = ?
+                    AND unread.is_read = false
+                ) AS unread_count
+
+            FROM (
+                SELECT
+                    CASE
+                        WHEN sender_id = ? THEN receiver_id
+                        ELSE sender_id
+                    END AS other_user_id,
+                    MAX(id) AS latest_message_id
+
+                FROM messages
+                WHERE sender_id = ? OR receiver_id = ?
+
+                GROUP BY other_user_id
+            ) conversation
+
+            INNER JOIN messages m
+                ON m.id = conversation.latest_message_id
+
+            INNER JOIN users u
+                ON u.id = conversation.other_user_id
+
+            ORDER BY m.created_at DESC
+            `,
+            [userId, userId, userId, userId]
         );
-        res.status(201).json({ id: result.insertId, message: 'Sent' });
-    } catch (err) {
-        console.error('Send message error:', err);
-        res.status(500).json({ error: err.message });
+
+        return res.status(200).json({
+            success: true,
+            data: conversations
+        });
+
+    } catch (error) {
+        console.error('Get conversations error:', error);
+
+        return res.status(500).json({
+            success: false,
+            message: 'Unable to retrieve conversations.'
+        });
     }
 });
 
-// ============= GET MESSAGES BETWEEN USERS =============
-router.get('/:userId/:otherUserId', async (req, res) => {
-    try {
-        const [messages] = await promisePool.query(`
-            SELECT * FROM messages 
-            WHERE (sender_id = ? AND receiver_id = ?)
-               OR (sender_id = ? AND receiver_id = ?)
-            ORDER BY created_at ASC
-        `, [req.params.userId, req.params.otherUserId, req.params.otherUserId, req.params.userId]);
-        
-        await promisePool.query(
-            'UPDATE messages SET is_read = true WHERE sender_id = ? AND receiver_id = ? AND is_read = false',
-            [req.params.otherUserId, req.params.userId]
-        );
-        
-        res.json(messages);
-    } catch (err) {
-        console.error('Get messages error:', err);
-        res.status(500).json({ error: err.message });
-    }
-});
+// ==========================================
+// UNREAD MESSAGE COUNT
+// GET /api/messages/unread/:userId
+// IMPORTANT: Keep this BEFORE generic message routes.
+// ==========================================
 
-// ============= UNREAD COUNT =============
 router.get('/unread/:userId', async (req, res) => {
     try {
+        const currentUserId = req.user.id;
+
+        if (String(currentUserId) !== String(req.params.userId)) {
+            return res.status(403).json({
+                success: false,
+                message: 'You cannot access another user unread count.'
+            });
+        }
+
         const [result] = await promisePool.query(
-            'SELECT COUNT(*) as count FROM messages WHERE receiver_id = ? AND is_read = false', 
-            [req.params.userId]
+            `
+            SELECT COUNT(*) AS count
+            FROM messages
+            WHERE receiver_id = ?
+            AND is_read = false
+            `,
+            [currentUserId]
         );
-        res.json({ count: result[0].count || 0 });
-    } catch (err) { 
-        console.error('Unread count error:', err);
-        res.status(500).json({ error: err.message }); 
+
+        return res.status(200).json({
+            success: true,
+            count: Number(result[0].count) || 0
+        });
+
+    } catch (error) {
+        console.error('Unread count error:', error);
+
+        return res.status(500).json({
+            success: false,
+            message: 'Unable to retrieve unread count.'
+        });
     }
 });
 
-// ============= MARK AS READ =============
+// ==========================================
+// SEND MESSAGE
+// POST /api/messages
+// ==========================================
+
+router.post('/', async (req, res) => {
+    try {
+        const senderId = req.user.id;
+        const { receiver_id, message } = req.body;
+
+        if (!receiver_id || !message || typeof message !== 'string') {
+            return res.status(400).json({
+                success: false,
+                message: 'Receiver and message are required.'
+            });
+        }
+
+        const cleanMessage = message.trim();
+
+        if (!cleanMessage || cleanMessage.length > 5000) {
+            return res.status(400).json({
+                success: false,
+                message: 'Message must contain 1 to 5000 characters.'
+            });
+        }
+
+        if (String(senderId) === String(receiver_id)) {
+            return res.status(400).json({
+                success: false,
+                message: 'You cannot send a message to yourself.'
+            });
+        }
+
+        const [receivers] = await promisePool.query(
+            'SELECT id FROM users WHERE id = ? LIMIT 1',
+            [receiver_id]
+        );
+
+        if (!receivers.length) {
+            return res.status(404).json({
+                success: false,
+                message: 'Receiver not found.'
+            });
+        }
+
+        const [result] = await promisePool.query(
+            `INSERT INTO messages
+             (sender_id, receiver_id, message, is_read)
+             VALUES (?, ?, ?, false)`,
+            [senderId, receiver_id, cleanMessage]
+        );
+
+        return res.status(201).json({
+            success: true,
+            message: 'Message sent successfully.',
+            data: {
+                id: result.insertId,
+                sender_id: senderId,
+                receiver_id,
+                message: cleanMessage,
+                is_read: false,
+                created_at: new Date()
+            }
+        });
+
+    } catch (error) {
+        console.error('Send message error:', error);
+
+        return res.status(500).json({
+            success: false,
+            message: 'Unable to send message.'
+        });
+    }
+});
+
+// ==========================================
+// MARK CONVERSATION AS READ
+// PUT /api/messages/read/:userId/:otherUserId
+// ==========================================
+
 router.put('/read/:userId/:otherUserId', async (req, res) => {
     try {
-        await promisePool.query(
-            'UPDATE messages SET is_read = true WHERE sender_id = ? AND receiver_id = ?', 
-            [req.params.otherUserId, req.params.userId]
+        const currentUserId = req.user.id;
+        const requestedUserId = req.params.userId;
+        const otherUserId = req.params.otherUserId;
+
+        if (String(currentUserId) !== String(requestedUserId)) {
+            return res.status(403).json({
+                success: false,
+                message: 'You cannot update another user messages.'
+            });
+        }
+
+        const [result] = await promisePool.query(
+            `
+            UPDATE messages
+            SET is_read = true
+            WHERE sender_id = ?
+            AND receiver_id = ?
+            AND is_read = false
+            `,
+            [otherUserId, currentUserId]
         );
-        res.json({ message: 'Marked as read' });
-    } catch (err) { 
-        console.error('Mark read error:', err);
-        res.status(500).json({ error: err.message }); 
+
+        return res.status(200).json({
+            success: true,
+            message: 'Messages marked as read.',
+            affectedRows: result.affectedRows
+        });
+
+    } catch (error) {
+        console.error('Mark messages read error:', error);
+
+        return res.status(500).json({
+            success: false,
+            message: 'Unable to mark messages as read.'
+        });
     }
 });
 
-// ============= DELETE MESSAGE =============
+// ==========================================
+// DELETE MESSAGE
+// DELETE /api/messages/:messageId
+// ==========================================
+
 router.delete('/:messageId', async (req, res) => {
     try {
-        await promisePool.query('DELETE FROM messages WHERE id = ?', [req.params.messageId]);
-        res.json({ message: 'Deleted' });
-    } catch (err) { 
-        console.error('Delete message error:', err);
-        res.status(500).json({ error: err.message }); 
+        const currentUserId = req.user.id;
+        const messageId = req.params.messageId;
+
+        const [result] = await promisePool.query(
+            `
+            DELETE FROM messages
+            WHERE id = ?
+            AND sender_id = ?
+            `,
+            [messageId, currentUserId]
+        );
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Message not found or you cannot delete it.'
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: 'Message deleted successfully.'
+        });
+
+    } catch (error) {
+        console.error('Delete message error:', error);
+
+        return res.status(500).json({
+            success: false,
+            message: 'Unable to delete message.'
+        });
+    }
+});
+
+// ==========================================
+// GET MESSAGES BETWEEN TWO USERS
+// GET /api/messages/:userId/:otherUserId
+// Keep generic route AFTER specific routes.
+// ==========================================
+
+router.get('/:userId/:otherUserId', async (req, res) => {
+    try {
+        const currentUserId = req.user.id;
+        const requestedUserId = req.params.userId;
+        const otherUserId = req.params.otherUserId;
+
+        if (String(currentUserId) !== String(requestedUserId)) {
+            return res.status(403).json({
+                success: false,
+                message: 'You cannot access another user messages.'
+            });
+        }
+
+        if (String(currentUserId) === String(otherUserId)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid conversation.'
+            });
+        }
+
+        const [messages] = await promisePool.query(
+            `
+            SELECT
+                id,
+                sender_id,
+                receiver_id,
+                message,
+                is_read,
+                created_at
+            FROM messages
+            WHERE
+                (sender_id = ? AND receiver_id = ?)
+                OR
+                (sender_id = ? AND receiver_id = ?)
+            ORDER BY created_at ASC, id ASC
+            `,
+            [
+                currentUserId,
+                otherUserId,
+                otherUserId,
+                currentUserId
+            ]
+        );
+
+        await promisePool.query(
+            `
+            UPDATE messages
+            SET is_read = true
+            WHERE sender_id = ?
+            AND receiver_id = ?
+            AND is_read = false
+            `,
+            [otherUserId, currentUserId]
+        );
+
+        return res.status(200).json({
+            success: true,
+            data: messages
+        });
+
+    } catch (error) {
+        console.error('Get messages error:', error);
+
+        return res.status(500).json({
+            success: false,
+            message: 'Unable to retrieve messages.'
+        });
     }
 });
 

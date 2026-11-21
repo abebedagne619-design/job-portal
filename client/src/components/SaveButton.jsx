@@ -12,7 +12,7 @@ const SaveButton = ({ jobId, userId }) => {
 
     const checkIfSaved = async () => {
         try {
-            const token = localStorage.getItem('token');
+            const token = sessionStorage.getItem('token');
             
             // ✅ ትክክለኛው API endpoint (user በtoken ይታወቃል)
             const res = await fetch(`http://localhost:5000/api/saved/check/${jobId}`, {
@@ -39,7 +39,7 @@ const SaveButton = ({ jobId, userId }) => {
         
         setLoading(true);
         try {
-            const token = localStorage.getItem('token');
+            const token = sessionStorage.getItem('token');
             
             if (saved) {
                 // ✅ ለማስወገድ - DELETE request with jobId in URL
@@ -85,7 +85,7 @@ const SaveButton = ({ jobId, userId }) => {
         }
     };
     // SaveButton.jsx ውስጥ
-const token = localStorage.getItem('token');
+const token = sessionStorage.getItem('token');
 
 // ቶከን መኖሩን መፈተሽ
 if (!token) {

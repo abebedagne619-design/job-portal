@@ -1,225 +1,543 @@
-import React, { useState, useEffect, useRef } from 'react';
+
+import React, {
+    useState,
+    useEffect,
+    useRef,
+    useCallback
+} from 'react';
+
 import { useLanguage } from '../context/LanguageContext';
 import ChangePassword from './ChangePassword';
 import Chat from './Chat';
 import io from 'socket.io-client';
 
-const Navbar = ({ user, setUser, setCurrentPage, onLogout, currentPage }) => {
+const API_URL = 'http://localhost:5000';
+
+const Navbar = ({
+    user,
+    setUser,
+    setCurrentPage,
+    onLogout,
+    currentPage
+}) => {
     const { language, setLanguage, t } = useLanguage();
+
+    // ==========================================
+    // STATES
+    // ==========================================
     const [showChangePassword, setShowChangePassword] = useState(false);
     const [showChat, setShowChat] = useState(false);
     const [selectedChatUser, setSelectedChatUser] = useState(null);
+
     const [unreadCount, setUnreadCount] = useState(0);
     const [showUserMenu, setShowUserMenu] = useState(false);
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
     const [availableUsers, setAvailableUsers] = useState([]);
     const [searchTerm, setSearchTerm] = useState('');
-    const socketRef = useRef();
+    const [usersLoading, setUsersLoading] = useState(false);
 
-    const fetchUnreadCount = async () => {
-        if (!user) return;
-        try {
-            const res = await fetch(`http://localhost:5000/api/messages/unread/${user.id}`);
-            
-            if (res.ok) {
-                const data = await res.json();
-                setUnreadCount(data.count || 0);
-            } else {
-                console.warn(`API Error: ${res.status}`);
-            }
-        } catch (err) {
-            console.error('Network Error:', err);
+    // Shared Socket.IO connection
+    const [socketInstance, setSocketInstance] = useState(null);
+
+    const socketRef = useRef(null);
+
+    // ==========================================
+    // AUTHENTICATION HEADERS
+    // ==========================================
+    const getAuthHeaders = useCallback(() => {
+        const token = sessionStorage.getItem('token');
+
+        return {
+            'Content-Type': 'application/json',
+            ...(token
+                ? { Authorization: `Bearer ${token}` }
+                : {})
+        };
+    }, []);
+
+    // ==========================================
+    // FETCH UNREAD MESSAGE COUNT
+    // ==========================================
+    const fetchUnreadCount = useCallback(async () => {
+        if (!user?.id) {
+            setUnreadCount(0);
+            return;
         }
-    };
 
-    const fetchAvailableUsers = async () => {
-        if (!user) return;
         try {
-            const res = await fetch(`http://localhost:5000/api/users`);
-            if (!res.ok) return;
+            const res = await fetch(
+                `${API_URL}/api/messages/unread/${user.id}`,
+                {
+                    method: 'GET',
+                    headers: getAuthHeaders()
+                }
+            );
+
+            if (!res.ok) {
+                console.warn(
+                    'Unread message API error:',
+                    res.status
+                );
+                return;
+            }
+
             const data = await res.json();
-            setAvailableUsers(data.filter(u => u.id !== user.id));
+
+            const count =
+                data?.count ??
+                data?.data?.count ??
+                0;
+
+            setUnreadCount(Number(count) || 0);
+
+        } catch (err) {
+            console.error(
+                'Error fetching unread messages:',
+                err
+            );
+        }
+    }, [user?.id, getAuthHeaders]);
+
+    // ==========================================
+    // FETCH AVAILABLE CHAT USERS
+    // ==========================================
+    const fetchAvailableUsers = useCallback(async () => {
+        if (!user?.id) {
+            setAvailableUsers([]);
+            return;
+        }
+
+        setUsersLoading(true);
+
+        try {
+            const res = await fetch(
+                `${API_URL}/api/users`,
+                {
+                    method: 'GET',
+                    headers: getAuthHeaders()
+                }
+            );
+
+            if (!res.ok) {
+                console.warn(
+                    'Users API error:',
+                    res.status
+                );
+
+                setAvailableUsers([]);
+                return;
+            }
+
+            const response = await res.json();
+
+            const users =
+                Array.isArray(response)
+                    ? response
+                    : Array.isArray(response?.data)
+                        ? response.data
+                        : Array.isArray(response?.users)
+                            ? response.users
+                            : Array.isArray(response?.data?.users)
+                                ? response.data.users
+                                : [];
+
+            setAvailableUsers(
+                users.filter(
+                    usr =>
+                        String(usr.id) !== String(user.id)
+                )
+            );
+
         } catch (err) {
             console.error('Error fetching users:', err);
-        }
-    };
+            setAvailableUsers([]);
 
+        } finally {
+            setUsersLoading(false);
+        }
+    }, [user?.id, getAuthHeaders]);
+
+    // ==========================================
+    // SOCKET.IO CONNECTION
+    // ==========================================
     useEffect(() => {
-        let socket;
+        if (!user?.id) {
+            setUnreadCount(0);
+            setAvailableUsers([]);
+            setShowUserMenu(false);
+            setShowChat(false);
+            setSelectedChatUser(null);
+            setSocketInstance(null);
 
-        if (user && user.id) {
-            fetchUnreadCount();
-            fetchAvailableUsers();
-
-            socket = io('http://localhost:5000', {
-                transports: ['websocket', 'polling'],
-                reconnection: true,
-                reconnectionAttempts: 5
-            });
-
-            socketRef.current = socket;
-
-            socket.on('connect', () => {
-                console.log('Connected to socket');
-                socket.emit('user-connected', user.id);
-            });
-
-            socket.on('unread-update', (data) => {
-                if (String(data.userId) === String(user.id)) {
-                    setUnreadCount(data.count);
-                    fetchUnreadCount();
-                }
-            });
-
-            socket.on('new-message', () => {
-                fetchUnreadCount();
-            });
+            return undefined;
         }
 
-        return () => {
-            if (socket) {
-                if (socket.connected) {
-                    socket.disconnect();
-                } else {
-                    socket.once('connect', () => socket.disconnect());
-                }
-                socketRef.current = null;
+        const token = sessionStorage.getItem('token');
+
+        if (!token) {
+            console.error(
+                'Socket connection cancelled: JWT token not found.'
+            );
+
+            setSocketInstance(null);
+            return undefined;
+        }
+
+        fetchUnreadCount();
+        fetchAvailableUsers();
+
+        // Create ONE authenticated Socket.IO connection.
+        const socket = io(API_URL, {
+            transports: ['websocket', 'polling'],
+            reconnection: true,
+            reconnectionAttempts: 5,
+            reconnectionDelay: 1000,
+            withCredentials: true,
+            auth: {
+                token
+            }
+        });
+
+        socketRef.current = socket;
+        setSocketInstance(socket);
+
+        // ------------------------------------------
+        // SOCKET CONNECTED
+        // ------------------------------------------
+        const handleConnect = () => {
+            console.log(
+                'Connected to authenticated Socket.IO:',
+                socket.id
+            );
+
+            // No user-connected event is needed.
+            // The server identifies the user using JWT.
+        };
+
+        // ------------------------------------------
+        // UNREAD MESSAGE UPDATE
+        // ------------------------------------------
+        const handleUnreadUpdate = (data) => {
+            if (
+                String(data?.userId) === String(user.id)
+            ) {
+                setUnreadCount(
+                    Number(data?.count) || 0
+                );
+
+                // Refresh count from the API.
+                fetchUnreadCount();
             }
         };
-    }, [user?.id]);
 
+        // ------------------------------------------
+        // NEW MESSAGE
+        // ------------------------------------------
+        const handleNewMessage = (message) => {
+            console.log('New message received:', message);
+
+            // Refresh navbar unread count.
+            fetchUnreadCount();
+        };
+
+        // ------------------------------------------
+        // DISCONNECT
+        // ------------------------------------------
+        const handleDisconnect = (reason) => {
+            console.log(
+                'Socket disconnected:',
+                reason
+            );
+        };
+
+        // ------------------------------------------
+        // CONNECTION ERROR
+        // ------------------------------------------
+        const handleConnectError = (error) => {
+            console.error(
+                'Socket connection error:',
+                error.message
+            );
+        };
+
+        socket.on('connect', handleConnect);
+        socket.on('unread-update', handleUnreadUpdate);
+        socket.on('new-message', handleNewMessage);
+        socket.on('disconnect', handleDisconnect);
+        socket.on('connect_error', handleConnectError);
+
+        // ------------------------------------------
+        // CLEANUP
+        // ------------------------------------------
+        return () => {
+            socket.off('connect', handleConnect);
+            socket.off('unread-update', handleUnreadUpdate);
+            socket.off('new-message', handleNewMessage);
+            socket.off('disconnect', handleDisconnect);
+            socket.off('connect_error', handleConnectError);
+
+            socket.disconnect();
+
+            if (socketRef.current === socket) {
+                socketRef.current = null;
+                setSocketInstance(null);
+            }
+        };
+
+    }, [
+        user?.id,
+        fetchUnreadCount,
+        fetchAvailableUsers
+    ]);
+
+    // ==========================================
+    // LOGOUT
+    // ==========================================
     const handleLogout = () => {
+        setShowUserMenu(false);
+        setShowChat(false);
+        setShowChangePassword(false);
+        setSelectedChatUser(null);
+        setIsMobileMenuOpen(false);
+        setSearchTerm('');
+
+        // Disconnect shared socket.
+        if (socketRef.current) {
+            socketRef.current.disconnect();
+            socketRef.current = null;
+        }
+
+        setSocketInstance(null);
+
+        setUnreadCount(0);
+        setAvailableUsers([]);
+
         setUser(null);
-        localStorage.removeItem('user');
-        setCurrentPage('login');
-        if (onLogout) onLogout();
+
+        sessionStorage.removeItem('user');
+        sessionStorage.removeItem('token');
+
+        if (onLogout) {
+            onLogout();
+        } else {
+            setCurrentPage('login');
+        }
     };
 
+    // ==========================================
+    // OPEN CHAT
+    // ==========================================
     const openChatWith = (otherUser) => {
+        if (!user) {
+            setCurrentPage('login');
+            return;
+        }
+
         setSelectedChatUser(otherUser);
         setShowChat(true);
+
         setShowUserMenu(false);
         setIsMobileMenuOpen(false);
     };
 
-    const filteredUsers = availableUsers.filter(user =>
-        user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        user.email.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    // ==========================================
+    // FILTER CHAT USERS
+    // ==========================================
+    const filteredUsers = availableUsers.filter(usr => {
+        const name = (usr.name || '').toLowerCase();
+        const email = (usr.email || '').toLowerCase();
 
+        const search = searchTerm.toLowerCase().trim();
+
+        return (
+            name.includes(search) ||
+            email.includes(search)
+        );
+    });
+
+    // ==========================================
+    // NAVIGATION HELPER
+    // ==========================================
+    const navigatePage = (page, isMobile = false) => {
+        setCurrentPage(page);
+
+        setShowUserMenu(false);
+
+        if (isMobile) {
+            setIsMobileMenuOpen(false);
+        }
+    };
+
+    // ==========================================
+    // USER ROLE CHECK
+    // ==========================================
+    const isApplicant =
+        user?.role === 'applicant' ||
+        user?.role === 'user';
+
+    const isEmployer =
+        user?.role === 'employer';
+
+    const isAdmin =
+        user?.role === 'admin';
+
+    // ==========================================
+    // PREMIUM GREEN THEME STYLES
+    // ==========================================
     const styles = {
         nav: {
-            background: '#062606',
+            background:
+                'linear-gradient(135deg, #061b12 0%, #082b1c 55%, #063b25 100%)',
             display: 'flex',
             flexDirection: 'column',
             position: 'sticky',
             top: 0,
             zIndex: 1000,
-            boxShadow: '0 4px 15px rgba(0,0,0,0.3)',
+            boxShadow: '0 5px 22px rgba(0,0,0,0.28)',
             width: '100%',
-            boxSizing: 'border-box'
+            boxSizing: 'border-box',
+            borderBottom: '1px solid rgba(16, 185, 129, 0.25)'
         },
+
         topRow: {
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
-            padding: '0.7rem 2%',
-            borderBottom: '1px solid rgba(46, 204, 113, 0.2)',
+            padding: '0.8rem 3%',
+            borderBottom: '1px solid rgba(16, 185, 129, 0.15)',
             width: '100%',
-            boxSizing: 'border-box'
+            boxSizing: 'border-box',
+            gap: '12px',
+            minHeight: '70px'
         },
+
         bottomRow: {
             display: 'flex',
             justifyContent: 'center',
             alignItems: 'center',
             gap: '1.5rem',
-            padding: '0.8rem 2%',
-            background: '#083008',
+            padding: '0.9rem 2%',
+            background: 'rgba(2, 20, 13, 0.35)',
             flexWrap: 'wrap',
             width: '100%',
             boxSizing: 'border-box'
         },
-        logo: { 
-            fontSize: '1.6rem', 
-            fontWeight: 'bold', 
-            color: '#2ecc71', 
+
+        logo: {
+            fontSize: '1.65rem',
+            fontWeight: '800',
+            background:
+                'linear-gradient(90deg, #34d399, #a7f3d0)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
             cursor: 'pointer',
             textDecoration: 'none',
             display: 'flex',
-            alignItems: 'center'
+            alignItems: 'center',
+            whiteSpace: 'nowrap',
+            letterSpacing: '-0.5px'
         },
-        link: (active) => ({ 
-            color: active ? '#2ecc71' : '#ecf0f1', 
-            cursor: 'pointer', 
-            textDecoration: 'none', 
+
+        link: (active) => ({
+            color: active ? '#34d399' : '#e5f5ec',
+            cursor: 'pointer',
+            textDecoration: 'none',
             fontSize: '0.9rem',
-            fontWeight: active ? 'bold' : '500',
+            fontWeight: active ? '700' : '500',
             position: 'relative',
+            transition: 'all 0.25s ease',
+            whiteSpace: 'nowrap',
+            padding: '7px 3px',
+            borderBottom: active
+                ? '2px solid #34d399'
+                : '2px solid transparent'
+        }),
+
+        aiBtn: (active) => ({
+            padding: '0.55rem 1.05rem',
+            background: active
+                ? 'linear-gradient(135deg, #059669, #10b981)'
+                : 'rgba(16, 185, 129, 0.1)',
+            border: '1px solid #10b981',
+            borderRadius: '25px',
+            color: '#ecfdf5',
+            cursor: 'pointer',
+            fontSize: '0.85rem',
+            fontWeight: '700',
             transition: 'all 0.3s ease',
             whiteSpace: 'nowrap'
         }),
-        aiBtn: (active) => ({
-            padding: '0.5rem 1rem',
-            background: active ? '#2ecc71' : 'rgba(46, 204, 113, 0.1)',
-            border: '1px solid #2ecc71',
-            borderRadius: '25px',
-            color: active ? '#fff' : '#2ecc71',
-            cursor: 'pointer',
-            fontSize: '0.85rem',
-            fontWeight: 'bold',
-            transition: 'all 0.3s',
-            whiteSpace: 'nowrap'
-        }),
+
         userSection: {
             display: 'flex',
             alignItems: 'center',
-            gap: '12px'
+            gap: '12px',
+            flexWrap: 'wrap',
+            justifyContent: 'flex-end'
         },
-        btn: { 
-            padding: '0.5rem 1.2rem', 
-            background: '#2ecc71', 
-            border: 'none', 
-            borderRadius: '8px', 
-            color: '#fff', 
+
+        btn: {
+            padding: '0.55rem 1.2rem',
+            background:
+                'linear-gradient(135deg, #059669, #10b981)',
+            border: '1px solid #10b981',
+            borderRadius: '8px',
+            color: '#fff',
             cursor: 'pointer',
-            fontWeight: 'bold',
+            fontWeight: '700',
             fontSize: '0.85rem',
-            whiteSpace: 'nowrap'
+            whiteSpace: 'nowrap',
+            transition: 'all 0.25s ease'
         },
-        btnOutline: { 
-            padding: '0.5rem 1rem', 
-            background: 'transparent', 
-            border: '1px solid #2ecc71', 
-            borderRadius: '8px', 
-            color: '#2ecc71', 
+
+        btnOutline: {
+            padding: '0.55rem 1rem',
+            background: 'rgba(16, 185, 129, 0.06)',
+            border: '1px solid rgba(52, 211, 153, 0.7)',
+            borderRadius: '8px',
+            color: '#a7f3d0',
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
             gap: '6px',
             fontSize: '0.85rem',
-            whiteSpace: 'nowrap'
+            fontWeight: '600',
+            whiteSpace: 'nowrap',
+            transition: 'all 0.25s ease'
         },
+
         badge: {
             position: 'absolute',
-            top: '-10px',
-            right: '-15px',
+            top: '-9px',
+            right: '-14px',
             background: '#ef4444',
             color: '#fff',
-            fontSize: '0.7rem',
+            fontSize: '0.68rem',
+            fontWeight: '700',
             borderRadius: '50%',
-            width: '20px',
-            height: '20px',
+            minWidth: '19px',
+            height: '19px',
+            padding: '0 3px',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            border: '2px solid #083008'
+            border: '2px solid #082b1c',
+            boxSizing: 'border-box'
         },
-        hamburger: { 
-            display: 'none', 
-            fontSize: '1.8rem', 
-            cursor: 'pointer', 
-            color: '#fff' 
+
+        hamburger: {
+            display: 'none',
+            fontSize: '1.8rem',
+            cursor: 'pointer',
+            color: '#d1fae5',
+            userSelect: 'none',
+            lineHeight: 1,
+            padding: '5px',
+            background: 'transparent',
+            border: 'none'
         },
+
         mobileMenu: {
             display: isMobileMenuOpen ? 'flex' : 'none',
             flexDirection: 'column',
@@ -227,204 +545,583 @@ const Navbar = ({ user, setUser, setCurrentPage, onLogout, currentPage }) => {
             top: '100%',
             left: 0,
             right: 0,
-            background: '#062606',
-            padding: '2rem',
-            gap: '1.5rem',
+            background: '#071f15',
+            padding: '1.5rem',
+            gap: '1.2rem',
             zIndex: 999,
-            borderTop: '1px solid #2ecc71'
+            borderTop:
+                '1px solid rgba(52, 211, 153, 0.4)',
+            boxShadow: '0 12px 25px rgba(0,0,0,0.35)',
+            boxSizing: 'border-box',
+            maxHeight: 'calc(100vh - 75px)',
+            overflowY: 'auto'
         }
     };
 
+    // ==========================================
+    // NAVIGATION MENU ITEMS
+    // ==========================================
     const MenuItems = ({ isMobile = false }) => (
         <>
-            <span style={styles.link(currentPage === 'jobs')} onClick={() => { setCurrentPage('jobs'); if(isMobile) setIsMobileMenuOpen(false); }}>
-                {t.jobs}
+            {/* PUBLIC JOBS PAGE */}
+            <span
+                style={styles.link(currentPage === 'jobs')}
+                onClick={() => navigatePage('jobs', isMobile)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                        navigatePage('jobs', isMobile);
+                    }
+                }}
+            >
+                {t.jobs || 'Jobs'}
             </span>
-            
+
+            {/* AUTHENTICATED USER MENU */}
             {user && (
-                <span style={styles.link(currentPage === 'notifications')} onClick={() => { setCurrentPage('notifications'); if(isMobile) setIsMobileMenuOpen(false); }}>
-                    🔔 {t.notifications || 'Notifications'}
-                </span>
-            )}
-
-            {user && (user.role === 'user' || user.role === 'admin') && (
-                <span style={styles.link(currentPage === 'alerts')} onClick={() => { setCurrentPage('alerts'); if(isMobile) setIsMobileMenuOpen(false); }}>
-                    📢 {t.jobAlerts || 'Job Alerts'}
-                </span>
-            )}
-
-            {user && (user.role === 'employer' || user.role === 'admin') && (
-                <span style={styles.link(currentPage === 'interviews')} onClick={() => { setCurrentPage('interviews'); if(isMobile) setIsMobileMenuOpen(false); }}>
-                    📅 {t.interviews || 'Interviews'}
-                </span>
-            )}
-
-            {user && (user.role === 'employer' || user.role === 'admin') && (
-                <span style={styles.link(currentPage === 'employer-apps')} onClick={() => { setCurrentPage('employer-apps'); if(isMobile) setIsMobileMenuOpen(false); }}>
-                    📥 {t.applications || 'Applications'}
-                </span>
-            )}
-
-            {user && (
-                <span style={styles.link(currentPage === 'saved')} onClick={() => { setCurrentPage('saved'); if(isMobile) setIsMobileMenuOpen(false); }}>
-                    📚 {t.savedJobs || 'Saved'}
-                </span>
-            )}
-            
-            {user && user.role === 'admin' && (
                 <>
-                    <span style={styles.link(currentPage === 'admin')} onClick={() => { setCurrentPage('admin'); if(isMobile) setIsMobileMenuOpen(false); }}>
-                        ⚙️ {t.admin}
+                    {/* NOTIFICATIONS */}
+                    <span
+                        style={styles.link(
+                            currentPage === 'notifications'
+                        )}
+                        onClick={() =>
+                            navigatePage('notifications', isMobile)
+                        }
+                        role="button"
+                        tabIndex={0}
+                    >
+                        🔔 {t.notifications || 'Notifications'}
                     </span>
-                    <span style={styles.link(currentPage === 'analytics')} onClick={() => { setCurrentPage('analytics'); if(isMobile) setIsMobileMenuOpen(false); }}>
-                        📈 {t.analytics}
+
+                    {/* JOB ALERTS */}
+                    {(isApplicant || isAdmin) && (
+                        <span
+                            style={styles.link(
+                                currentPage === 'alerts'
+                            )}
+                            onClick={() =>
+                                navigatePage('alerts', isMobile)
+                            }
+                            role="button"
+                            tabIndex={0}
+                        >
+                            📢 {t.jobAlerts || 'Job Alerts'}
+                        </span>
+                    )}
+
+                    
+{/* INTERVIEWS */}
+{(isApplicant || isEmployer || isAdmin) && (
+    <span
+        style={styles.link(
+            currentPage === 'interviews'
+        )}
+        onClick={() =>
+            navigatePage('interviews', isMobile)
+        }
+        role="button"
+        tabIndex={0}
+    >
+        📅 {t.interviews || 'Interviews'}
+    </span>
+)}
+
+                    {/* EMPLOYER APPLICATIONS */}
+                    {(isEmployer || isAdmin) && (
+                        <span
+                            style={styles.link(
+                                currentPage === 'employer-apps'
+                            )}
+                            onClick={() =>
+                                navigatePage('employer-apps', isMobile)
+                            }
+                            role="button"
+                            tabIndex={0}
+                        >
+                            📥 {t.applications || 'Applications'}
+                        </span>
+                    )}
+
+                    {/* SAVED JOBS */}
+                    <span
+                        style={styles.link(
+                            currentPage === 'saved'
+                        )}
+                        onClick={() =>
+                            navigatePage('saved', isMobile)
+                        }
+                        role="button"
+                        tabIndex={0}
+                    >
+                        📚 {t.savedJobs || 'Saved'}
                     </span>
+
+                    {/* ADMIN MENU */}
+                    {isAdmin && (
+                        <>
+                            <span
+                                style={styles.link(
+                                    currentPage === 'admin'
+                                )}
+                                onClick={() =>
+                                    navigatePage('admin', isMobile)
+                                }
+                                role="button"
+                                tabIndex={0}
+                            >
+                                ⚙️ {t.admin || 'Admin'}
+                            </span>
+
+                            <span
+                                style={styles.link(
+                                    currentPage === 'analytics'
+                                )}
+                                onClick={() =>
+                                    navigatePage('analytics', isMobile)
+                                }
+                                role="button"
+                                tabIndex={0}
+                            >
+                                📈 {t.analytics || 'Analytics'}
+                            </span>
+                        </>
+                    )}
+
+                    {/* MESSAGES */}
+                    <span
+                        style={{
+                            ...styles.link(
+                                currentPage === 'messages'
+                            ),
+                            position: 'relative'
+                        }}
+                        onClick={() => {
+    navigatePage('messages', isMobile);
+}}
+                        role="button"
+                        tabIndex={0}
+                    >
+                        💬 {t.messages || 'Messages'}
+
+                        {unreadCount > 0 && (
+                            <span style={styles.badge}>
+                                {unreadCount > 99
+                                    ? '99+'
+                                    : unreadCount}
+                            </span>
+                        )}
+                    </span>
+
+                    {/* AI RECOMMENDATIONS */}
+                    <button
+                        type="button"
+                        style={styles.aiBtn(
+                            currentPage === 'recommendations'
+                        )}
+                        onClick={() =>
+                            navigatePage('recommendations', isMobile)
+                        }
+                    >
+                        ✨ {t.aiRecommendations || 'AI Recommendations'}
+                    </button>
                 </>
             )}
 
-            {user && (
-                <span style={styles.link(currentPage === 'messages')} 
-                    onClick={() => {
-                        if (isMobile) { setCurrentPage('messages'); setIsMobileMenuOpen(false); }
-                        else { setShowUserMenu(!showUserMenu); }
-                    }}
-                >
-                    💬 {t.messages || 'Messages'}
-                    {unreadCount > 0 && <span style={styles.badge}>{unreadCount}</span>}
-                </span>
-            )}
+            {/* GUEST MOBILE MENU */}
+            {!user && isMobile && (
+                <>
+                    <button
+                        type="button"
+                        style={styles.btn}
+                        onClick={() =>
+                            navigatePage('login', true)
+                        }
+                    >
+                        {t.login || 'Login'}
+                    </button>
 
-            {user && (
-                <button 
-                    type="button"
-                    style={styles.aiBtn(currentPage === 'recommendations')} 
-                    onClick={() => { setCurrentPage('recommendations'); if(isMobile) setIsMobileMenuOpen(false); }}
-                >
-                    ✨ {t.aiRecommendations || 'AI Recommendations'}
-                </button>
+                    <button
+                        type="button"
+                        style={styles.btnOutline}
+                        onClick={() =>
+                            navigatePage('register', true)
+                        }
+                    >
+                        {t.register || 'Register'}
+                    </button>
+                </>
             )}
         </>
     );
 
+    // ==========================================
+    // MAIN NAVBAR
+    // ==========================================
     return (
         <>
             <nav style={styles.nav}>
+
+                {/* TOP NAVIGATION */}
                 <div style={styles.topRow}>
-                    <div style={styles.logo} onClick={() => setCurrentPage('jobs')}>
+
+                    {/* LOGO */}
+                    <div
+                        style={styles.logo}
+                        onClick={() => navigatePage('jobs')}
+                        role="button"
+                        tabIndex={0}
+                        aria-label="Go to home page"
+                    >
                         JobPortal
                     </div>
-                    
+
                     <div style={styles.userSection}>
-                        <button 
+
+                        {/* LANGUAGE SWITCHER */}
+                        <button
                             type="button"
-                            style={styles.btnOutline} 
-                            onClick={() => setLanguage(l => l === 'en' ? 'am' : 'en')}
+                            style={styles.btnOutline}
+                            onClick={() =>
+                                setLanguage(
+                                    l => l === 'en' ? 'am' : 'en'
+                                )
+                            }
                         >
-                            {language === 'en' ? 'አማርኛ' : 'English'}
+                            {language === 'en'
+                                ? 'አማርኛ'
+                                : 'English'}
                         </button>
-                        
+
+                        {/* LOGGED-IN USER */}
                         {user ? (
                             <>
-                                <span style={{ color: '#fff', fontSize: '0.9rem', fontWeight: '500' }}>👋 {user.name}</span>
-                                <button 
+                                <span
+                                    style={{
+                                        color: '#ecfdf5',
+                                        fontSize: '0.9rem',
+                                        fontWeight: '600'
+                                    }}
+                                >
+                                    👋 {user.name}
+                                </span>
+
+                                <button
                                     type="button"
-                                    style={styles.btnOutline} 
-                                    onClick={() => setShowChangePassword(true)}
+                                    style={styles.btnOutline}
+                                    onClick={() => {
+                                        setShowChangePassword(true);
+                                        setIsMobileMenuOpen(false);
+                                    }}
                                 >
                                     🔐 {t.changePassword || 'Change Password'}
                                 </button>
-                                <button 
+
+                                <button
                                     type="button"
-                                    style={styles.btn} 
+                                    style={styles.btn}
                                     onClick={handleLogout}
                                 >
-                                    {t.logout}
+                                    {t.logout || 'Logout'}
                                 </button>
                             </>
                         ) : (
-                            <div style={{ display: 'flex', gap: '10px' }}>
-                                <button 
+                            /* GUEST LOGIN AND REGISTER */
+                            <div
+                                className="guest-auth-buttons"
+                                style={{
+                                    display: 'flex',
+                                    gap: '10px',
+                                    alignItems: 'center'
+                                }}
+                            >
+                                <button
                                     type="button"
-                                    style={styles.btn} 
-                                    onClick={() => setCurrentPage('login')}
+                                    style={styles.btn}
+                                    onClick={() =>
+                                        navigatePage('login')
+                                    }
                                 >
-                                    {t.login}
+                                    {t.login || 'Login'}
                                 </button>
-                                <button 
+
+                                <button
                                     type="button"
-                                    style={styles.btnOutline} 
-                                    onClick={() => setCurrentPage('register')}
+                                    style={styles.btnOutline}
+                                    onClick={() =>
+                                        navigatePage('register')
+                                    }
                                 >
-                                    {t.register}
+                                    {t.register || 'Register'}
                                 </button>
                             </div>
                         )}
 
-                        <div className="mobile-toggle" style={styles.hamburger} onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}>
-                            <style>{`
-                                @media (max-width: 1100px) { 
-                                    .desktop-only { display: none !important; } 
-                                    .mobile-toggle { display: block !important; } 
-                                }
-                                .mobile-toggle { display: none; }
-                            `}</style>
-                            ☰
-                        </div>
+                        {/* MOBILE MENU BUTTON */}
+                        <button
+                            type="button"
+                            className="mobile-toggle"
+                            style={styles.hamburger}
+                            onClick={() =>
+                                setIsMobileMenuOpen(prev => !prev)
+                            }
+                            aria-label="Toggle navigation menu"
+                            aria-expanded={isMobileMenuOpen}
+                        >
+                            {isMobileMenuOpen ? '✕' : '☰'}
+                        </button>
                     </div>
                 </div>
 
-                <div className="desktop-only" style={styles.bottomRow}>
+                {/* DESKTOP NAVIGATION */}
+                <div
+                    className="desktop-only"
+                    style={styles.bottomRow}
+                >
                     <MenuItems />
                 </div>
 
+                {/* MOBILE NAVIGATION */}
                 <div style={styles.mobileMenu}>
                     <MenuItems isMobile={true} />
                 </div>
+
+                {/* RESPONSIVE CSS */}
+                <style>
+                    {`
+                        .mobile-toggle {
+                            display: none;
+                        }
+
+                        @media (max-width: 1100px) {
+                            .desktop-only {
+                                display: none !important;
+                            }
+
+                            .mobile-toggle {
+                                display: block !important;
+                            }
+                        }
+
+                        @media (max-width: 600px) {
+                            .guest-auth-buttons {
+                                gap: 5px !important;
+                            }
+
+                            .guest-auth-buttons button {
+                                padding: 0.4rem 0.65rem !important;
+                                font-size: 0.75rem !important;
+                            }
+                        }
+
+                        @media (max-width: 420px) {
+                            .guest-auth-buttons {
+                                display: none !important;
+                            }
+                        }
+                    `}
+                </style>
             </nav>
 
-            {showUserMenu && (
-                <div style={{
-                    position: 'absolute', top: '120px', right: '5%', background: '#1a3d1a', 
-                    borderRadius: '12px', padding: '1.5rem', minWidth: '300px', zIndex: 2000, 
-                    boxShadow: '0 15px 35px rgba(0,0,0,0.7)', border: '1px solid #2ecc71'
-                }}>
-                    <button 
+            {/* ======================================
+                QUICK CHAT USER MENU
+            ====================================== */}
+            {showUserMenu && user && (
+                <div
+                    style={{
+                        position: 'fixed',
+                        top: '125px',
+                        right: '3%',
+                        background: '#0b2d1e',
+                        borderRadius: '14px',
+                        padding: '1.4rem',
+                        width: '320px',
+                        maxWidth: '90vw',
+                        zIndex: 2000,
+                        boxShadow: '0 15px 35px rgba(0,0,0,0.45)',
+                        border:
+                            '1px solid rgba(52, 211, 153, 0.5)',
+                        boxSizing: 'border-box'
+                    }}
+                >
+                    {/* VIEW ALL MESSAGES */}
+                    <button
                         type="button"
-                        onClick={() => { setCurrentPage('messages'); setShowUserMenu(false); }}
-                        style={{ width: '100%', background: '#2ecc71', color: '#fff', border: 'none', padding: '12px', borderRadius: '8px', cursor: 'pointer', marginBottom: '15px', fontWeight: 'bold' }}
+                        onClick={() =>
+                            navigatePage('messages')
+                        }
+                        style={{
+                            width: '100%',
+                            background:
+                                'linear-gradient(135deg, #059669, #10b981)',
+                            color: '#fff',
+                            border: 'none',
+                            padding: '12px',
+                            borderRadius: '8px',
+                            cursor: 'pointer',
+                            marginBottom: '15px',
+                            fontWeight: '700'
+                        }}
                     >
                         📂 View All {t.messages || 'Messages'}
                     </button>
-                    <div style={{ color: '#2ecc71', fontSize: '0.8rem', marginBottom: '10px', textTransform: 'uppercase' }}>Quick Chat</div>
-                    <input 
-                        type="text" placeholder="Search users..." value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        style={{ width: '100%', padding: '12px', marginBottom: '15px', borderRadius: '6px', border: 'none', background: '#0a2a0a', color: '#fff' }}
-                    />
-                    <div style={{ maxHeight: '250px', overflowY: 'auto' }}>
-                        {filteredUsers.map(usr => (
-                            <div key={usr.id} onClick={() => openChatWith(usr)} style={{ padding: '12px', cursor: 'pointer', color: '#fff', borderBottom: '1px solid #2a4a2a', transition: 'background 0.2s' }}>
-                                <strong>{usr.name}</strong><br/>
-                                <small style={{ color: '#888' }}>{usr.email}</small>
-                            </div>
-                        ))}
+
+                    <div
+                        style={{
+                            color: '#6ee7b7',
+                            fontSize: '0.8rem',
+                            fontWeight: '700',
+                            marginBottom: '10px',
+                            textTransform: 'uppercase',
+                            letterSpacing: '1px'
+                        }}
+                    >
+                        Quick Chat
                     </div>
-                    <button 
+
+                    {/* SEARCH USERS */}
+                    <input
+                        type="text"
+                        placeholder="Search users..."
+                        value={searchTerm}
+                        onChange={(e) =>
+                            setSearchTerm(e.target.value)
+                        }
+                        style={{
+                            width: '100%',
+                            padding: '12px',
+                            marginBottom: '15px',
+                            borderRadius: '7px',
+                            border:
+                                '1px solid rgba(52, 211, 153, 0.25)',
+                            background: '#061f15',
+                            color: '#fff',
+                            boxSizing: 'border-box',
+                            outline: 'none'
+                        }}
+                    />
+
+                    {/* AVAILABLE USERS */}
+                    <div
+                        style={{
+                            maxHeight: '250px',
+                            overflowY: 'auto'
+                        }}
+                    >
+                        {usersLoading ? (
+                            <p
+                                style={{
+                                    color: '#a7f3d0',
+                                    textAlign: 'center',
+                                    padding: '15px'
+                                }}
+                            >
+                                Loading users...
+                            </p>
+                        ) : filteredUsers.length > 0 ? (
+                            filteredUsers.map(usr => (
+                                <div
+                                    key={usr.id}
+                                    onClick={() =>
+                                        openChatWith(usr)
+                                    }
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                            openChatWith(usr);
+                                        }
+                                    }}
+                                    role="button"
+                                    tabIndex={0}
+                                    style={{
+                                        padding: '12px',
+                                        cursor: 'pointer',
+                                        color: '#ecfdf5',
+                                        borderBottom:
+                                            '1px solid rgba(52, 211, 153, 0.12)',
+                                        transition: 'background 0.2s'
+                                    }}
+                                >
+                                    <strong>{usr.name}</strong>
+
+                                    <br />
+
+                                    <small
+                                        style={{
+                                            color: '#9ca3af'
+                                        }}
+                                    >
+                                        {usr.email}
+                                    </small>
+                                </div>
+                            ))
+                        ) : (
+                            <p
+                                style={{
+                                    color: '#9ca3af',
+                                    textAlign: 'center',
+                                    padding: '15px'
+                                }}
+                            >
+                                No users found.
+                            </p>
+                        )}
+                    </div>
+
+                    {/* CLOSE MENU */}
+                    <button
                         type="button"
-                        onClick={() => setShowUserMenu(false)} 
-                        style={{ width: '100%', marginTop: '15px', background: 'transparent', color: '#ef4444', border: '1px solid #ef4444', padding: '10px', borderRadius: '6px', cursor: 'pointer' }}
+                        onClick={() => {
+                            setShowUserMenu(false);
+                            setSearchTerm('');
+                        }}
+                        style={{
+                            width: '100%',
+                            marginTop: '15px',
+                            background: 'transparent',
+                            color: '#f87171',
+                            border: '1px solid #ef4444',
+                            padding: '10px',
+                            borderRadius: '7px',
+                            cursor: 'pointer',
+                            fontWeight: '600'
+                        }}
                     >
                         Close
                     </button>
                 </div>
             )}
 
-            {showChangePassword && <ChangePassword user={user} onClose={() => setShowChangePassword(false)} />}
-            {showChat && selectedChatUser && (
-                <Chat user={user} otherUser={selectedChatUser} onClose={() => { setShowChat(false); fetchUnreadCount(); }} />
+            {/* ======================================
+                CHANGE PASSWORD MODAL
+            ====================================== */}
+            {showChangePassword && user && (
+                <ChangePassword
+                    user={user}
+                    onClose={() =>
+                        setShowChangePassword(false)
+                    }
+                />
+            )}
+
+            {/* ======================================
+                CHAT COMPONENT
+            ====================================== */}
+            {showChat && selectedChatUser && user && (
+                <Chat
+                    user={user}
+                    otherUser={selectedChatUser}
+                    socket={socketInstance}
+                    onClose={() => {
+                        setShowChat(false);
+                        setSelectedChatUser(null);
+                        fetchUnreadCount();
+                    }}
+                />
             )}
         </>
     );
 };
 
 export default Navbar;
+
