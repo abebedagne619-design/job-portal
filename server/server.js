@@ -40,8 +40,15 @@ app.use(compression());
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(morgan('dev'));
 
+const allowedOrigins = [
+    process.env.CLIENT_URL,
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    'http://localhost:3000'
+].filter(Boolean);
+
 app.use(cors({
-    origin: "http://localhost:5173",
+    origin: allowedOrigins,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
 }));
@@ -3343,14 +3350,10 @@ const server = http.createServer(app);
 
 const io = socketIo(server, {
     cors: {
-        origin: [
-            'http://localhost:5173',
-            'http://127.0.0.1:5173',
-            'http://localhost:3000'
-        ],
-        methods: ['GET', 'POST'],
-        credentials: true
-    },
+    origin: allowedOrigins,
+    methods: ['GET', 'POST'],
+    credentials: true
+},
     pingTimeout: 60000,
     pingInterval: 25000
 });
