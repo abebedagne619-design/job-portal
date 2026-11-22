@@ -3112,15 +3112,21 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
     (req, res) => {
       const token = generateToken(req.user.id);
 
-      const { password, ...userWithoutPassword } = req.user;
+// Send only safe user information
+const safeUser = {
+    id: req.user.id,
+    name: req.user.name,
+    email: req.user.email,
+    role: req.user.role
+};
 
-      const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
+const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
 
-      const redirectUrl = `${clientUrl}/auth-success?token=${token}&user=${encodeURIComponent(
-        JSON.stringify(userWithoutPassword),
-      )}`;
+const redirectUrl = `${clientUrl}/auth-success?token=${token}&user=${encodeURIComponent(
+    JSON.stringify(safeUser)
+)}`;
 
-      res.redirect(redirectUrl);
+res.redirect(redirectUrl);
     },
   );
 

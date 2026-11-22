@@ -14,7 +14,7 @@ const AuthSuccess = () => {
         if (token && userParam) {
             try {
                 // 2. የተጠቃሚውን መረጃ ከ URL Decode አድርገን ወደ JSON እንቀይራለን
-                const user = JSON.parse(decodeURIComponent(userParam));
+                const user = JSON.parse(userParam);
                 
                 // 3. መረጃውን በ localStorage ውስጥ እናስቀምጣለን (App.jsx እንዲያነበው)
                 sessionStorage.setItem('token', token);
