@@ -1,5 +1,5 @@
 import React, { useState, useEffect, memo } from 'react';
-
+import { API_URL } from '../config/api';
 const JobCard = memo(({ job, user, onApply }) => {
     const [saved, setSaved] = useState(false);
     const [saving, setSaving] = useState(false);
@@ -19,7 +19,7 @@ const JobCard = memo(({ job, user, onApply }) => {
             const checkIfSaved = async () => {
                 try {
                     const token = sessionStorage.getItem('token');
-                    const res = await fetch(`http://localhost:5000/api/saved/check/${currentJobId}`, {
+                    const res = await fetch(`${API_URL}/api/saved/check/${currentJobId}`, {
                         headers: {
                             'Authorization': token ? `Bearer ${token}` : '',
                             'Content-Type': 'application/json'
@@ -44,7 +44,7 @@ const JobCard = memo(({ job, user, onApply }) => {
 
         try {
             const token = sessionStorage.getItem('token');
-            const res = await fetch('http://localhost:5000/api/ratings', {
+            const res = await fetch('${API_URL}/api/ratings', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -80,7 +80,7 @@ const JobCard = memo(({ job, user, onApply }) => {
 
             if (saved) {
                 // ከተቀመጡ ስራዎች አስወግድ
-                const res = await fetch(`http://localhost:5000/api/saved/${currentJobId}`, {
+                const res = await fetch(`${API_URL}/api/saved/${currentJobId}`, {
                     method: 'DELETE',
                     headers: {
                         'Authorization': token ? `Bearer ${token}` : '',
@@ -97,7 +97,7 @@ const JobCard = memo(({ job, user, onApply }) => {
                 }
             } else {
                 // ስራውን አስቀምጥ
-                const res = await fetch('http://localhost:5000/api/saved', {
+                const res = await fetch('${API_URL}/api/saved', {
                     method: 'POST',
                     headers: {
                         'Authorization': token ? `Bearer ${token}` : '',
@@ -131,7 +131,7 @@ const JobCard = memo(({ job, user, onApply }) => {
     const checkAuthenticity = async () => {
         setCheckingFake(true);
         try {
-            const res = await fetch('http://localhost:5000/api/jobs/check-fake', {
+            const res = await fetch('${API_URL}/api/jobs/check-fake', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -155,7 +155,7 @@ const JobCard = memo(({ job, user, onApply }) => {
         if (currentUserId && currentJobId) {
             const timer = setTimeout(() => {
                 const token = sessionStorage.getItem('token');
-                fetch(`http://localhost:5000/api/analytics/track-view`, {
+                fetch(`${API_URL}/api/analytics/track-view`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',

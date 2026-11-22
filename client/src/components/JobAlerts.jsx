@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { API_URL } from '../config/api';
 
 const JobAlerts = ({ user }) => {
     const [keyword, setKeyword] = useState('');
@@ -27,7 +28,7 @@ const JobAlerts = ({ user }) => {
             console.log('📤 Sending alert:', { keyword, location, type: jobType });
             console.log('🔑 Token:', token ? 'Exists' : 'Missing!');
 
-            const res = await fetch('http://localhost:5000/api/alerts', {
+            const res = await fetch('${API_URL}/api/alerts', {
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json',

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { API_URL } from '../config/api';
 
 const SavedJobs = ({ user }) => {
     const [savedJobs, setSavedJobs] = useState([]);
@@ -16,7 +17,7 @@ const SavedJobs = ({ user }) => {
         const token = sessionStorage.getItem('token'); // ቶከኑን መውሰድ
 
         // 1. አድራሻውን አስተካክዪ (በሰርቨርሽ ላይ ያለው /api/saved ስለሆነ)
-        const res = await fetch(`http://localhost:5000/api/saved`, {
+        const res = await fetch(`${API_URL}/api/saved`, {
             headers: {
                 'Authorization': `Bearer ${token}` // ቶከኑን መላክ
             }
@@ -41,7 +42,7 @@ const SavedJobs = ({ user }) => {
         if (!window.confirm('Are you sure you want to remove this job?')) return;
         
         try {
-            const res = await fetch('http://localhost:5000/api/saved', {
+            const res = await fetch('${API_URL}/api/saved', {
                 method: 'DELETE',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ userId: user.id, jobId: jobId })

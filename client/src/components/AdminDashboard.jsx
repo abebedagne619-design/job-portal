@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useLanguage } from '../context/LanguageContext';
+import { API_URL } from '../config/api';
 
 const AdminDashboard = ({ user }) => {
     const { language, t } = useLanguage();
@@ -35,18 +36,18 @@ const AdminDashboard = ({ user }) => {
 
             const [jobsRes, usersRes, appsRes, statsRes] =
                 await Promise.all([
-                    fetch('http://localhost:5000/api/jobs', {
+                    fetch('${API_URL}/api/jobs', {
                         cache: 'no-store'
                     }),
-                    fetch('http://localhost:5000/api/users', {
+                    fetch('${API_URL}/api/users', {
                         headers: authHeaders,
                         cache: 'no-store'
                     }),
-                    fetch('http://localhost:5000/api/applications', {
+                    fetch('${API_URL}/api/applications', {
                         headers: authHeaders,
                         cache: 'no-store'
                     }),
-                    fetch('http://localhost:5000/api/stats', {
+                    fetch('${API_URL}/api/stats', {
                         cache: 'no-store'
                     })
                 ]);
@@ -130,7 +131,7 @@ const AdminDashboard = ({ user }) => {
         try {
             const token = sessionStorage.getItem('token');
 
-            const res = await fetch('http://localhost:5000/api/jobs', {
+            const res = await fetch('${API_URL}/api/jobs', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -172,7 +173,7 @@ const AdminDashboard = ({ user }) => {
             const token = sessionStorage.getItem('token');
 
             const res = await fetch(
-                `http://localhost:5000/api/jobs/${id}`,
+                `${API_URL}/api/jobs/${id}`,
                 {
                     method: 'DELETE',
                     headers: {
@@ -199,7 +200,7 @@ const AdminDashboard = ({ user }) => {
             const token = sessionStorage.getItem('token');
 
             const res = await fetch(
-                `http://localhost:5000/api/applications/${id}/status`,
+                `${API_URL}/api/applications/${id}/status`,
                 {
                     method: 'PUT',
                     headers: {
@@ -232,7 +233,7 @@ const AdminDashboard = ({ user }) => {
             const token = sessionStorage.getItem('token');
 
             const res = await fetch(
-                `http://localhost:5000/api/applications/${id}`,
+                `${API_URL}/api/applications/${id}`,
                 {
                     method: 'DELETE',
                     headers: {

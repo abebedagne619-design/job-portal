@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { API_URL } from '../config/api';
 
 const SaveButton = ({ jobId, userId }) => {
     const [saved, setSaved] = useState(false);
@@ -15,7 +16,7 @@ const SaveButton = ({ jobId, userId }) => {
             const token = sessionStorage.getItem('token');
             
             // ✅ ትክክለኛው API endpoint (user በtoken ይታወቃል)
-            const res = await fetch(`http://localhost:5000/api/saved/check/${jobId}`, {
+            const res = await fetch(`${API_URL}/api/saved/check/${jobId}`, {
                 headers: {
                     'Authorization': token ? `Bearer ${token}` : '',
                     'Content-Type': 'application/json'
@@ -43,7 +44,7 @@ const SaveButton = ({ jobId, userId }) => {
             
             if (saved) {
                 // ✅ ለማስወገድ - DELETE request with jobId in URL
-                const res = await fetch(`http://localhost:5000/api/saved/${jobId}`, {
+                const res = await fetch(`${API_URL}/api/saved/${jobId}`, {
                     method: 'DELETE',
                     headers: {
                         'Authorization': token ? `Bearer ${token}` : '',
@@ -60,7 +61,7 @@ const SaveButton = ({ jobId, userId }) => {
                 }
             } else {
                 // ✅ ለማስቀመጥ - POST request with job_id in body
-                const res = await fetch('http://localhost:5000/api/saved', {
+                const res = await fetch(`${API_URL}/api/saved`, {
                     method: 'POST',
                     headers: {
                         'Authorization': token ? `Bearer ${token}` : '',
@@ -84,22 +85,6 @@ const SaveButton = ({ jobId, userId }) => {
             setLoading(false);
         }
     };
-    // SaveButton.jsx ውስጥ
-const token = sessionStorage.getItem('token');
-
-// ቶከን መኖሩን መፈተሽ
-if (!token) {
-    console.warn("ቶከን አልተገኘም፣ ተጠቃሚው መግባት አለበት።");
-    return;
-}
-
-const res = await fetch(`http://localhost:5000/api/saved/check/${jobId}`, {
-    headers: {
-        'Authorization': `Bearer ${token}`, // በትክክል መላኩን አረጋግጥ
-        'Content-Type': 'application/json'
-    }
-});
-
     const styles = {
         button: {
             background: saved ? '#ef4444' : '#2ecc71',

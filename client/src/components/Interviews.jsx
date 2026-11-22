@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { useLanguage } from '../context/LanguageContext';
+import { API_URL } from '../config/api';
 
-const API_URL = 'http://localhost:5000';
 
 const Interviews = ({ user }) => {
     const { language } = useLanguage();

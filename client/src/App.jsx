@@ -34,11 +34,12 @@ import EmployerApplications from './components/EmployerApplications';
 
 import './App.css';
 
+
 // ==========================================
 // API URL
 // ==========================================
 
-const API_URL = 'http://localhost:5000';
+import { API_URL } from './config/api';
 
 // ==========================================
 // VAPID KEY CONVERSION FUNCTION

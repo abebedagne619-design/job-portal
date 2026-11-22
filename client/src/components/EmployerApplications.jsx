@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import ScheduleInterview from './ScheduleInterview';
 import { useLanguage } from '../context/LanguageContext';
-
+import { API_URL } from '../config/api';
 const EmployerApplications = ({ user }) => {
     const { language } = useLanguage();
     const isAm = language === 'am';
@@ -32,8 +32,8 @@ const EmployerApplications = ({ user }) => {
 
                 const res = await fetch(
                     user.role === 'admin'
-                        ? 'http://localhost:5000/api/applications'
-                        : `http://localhost:5000/api/applications/employer/${user.id}`,
+    ? `${API_URL}/api/applications`
+    : `${API_URL}/api/applications/employer/${user.id}`,
                     {
                         headers: {
                             Authorization: `Bearer ${token}`

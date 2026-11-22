@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { API_URL } from '../config/api';
 
 const RatingStars = ({ jobId, userId, onRatingChange }) => {
     const [rating, setRating] = useState(0);
@@ -17,7 +18,7 @@ const RatingStars = ({ jobId, userId, onRatingChange }) => {
 
     const fetchAverageRating = async () => {
         try {
-            const res = await fetch(`http://localhost:5000/api/ratings/job/${jobId}`);
+            const res = await fetch(`${API_URL}/api/ratings/job/${jobId}`);
             const data = await res.json();
             // ዳታው ባዶ ከሆነ 0 እንዲሆን መከላከያ
             setAverageRating(data.average || 0);
@@ -29,7 +30,7 @@ const RatingStars = ({ jobId, userId, onRatingChange }) => {
 
     const fetchUserRating = async () => {
         try {
-            const res = await fetch(`http://localhost:5000/api/ratings/check/${userId}/${jobId}`);
+            const res = await fetch(`${API_URL}/api/ratings/check/${userId}/${jobId}`);
             const data = await res.json();
             if (data && data.rating) {
                 setRating(data.rating);
@@ -53,7 +54,7 @@ const RatingStars = ({ jobId, userId, onRatingChange }) => {
 
         setSubmitting(true);
         try {
-            const res = await fetch('http://localhost:5000/api/ratings', {
+            const res = await fetch(`${API_URL}/api/ratings`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 // ዳታቤዙ የሚፈልጋቸውን ስሞች (job_id, user_id) በትክክል መላካቸውን እናረጋግጥ

@@ -1,8 +1,9 @@
 import React from 'react';
+import { API_URL } from '../config/api';
 
 const GoogleLogin = () => {
     const handleGoogleLogin = () => {
-        window.location.href = 'http://localhost:5000/auth/google';
+        window.location.href = '${API_URL}/auth/google';
     };
 
     const styles = {
@@ -31,7 +32,7 @@ const GoogleLogin = () => {
     return (
         // Login.jsx ውስጥ መሆን ያለበት በተን
 <button 
-    onClick={() => window.location.href = 'http://localhost:5000/auth/google'}
+    onClick={() => window.location.href = '${API_URL}/auth/google'}
     className="google-btn"
 >
     <i className="fab fa-google"></i> Sign in with Google

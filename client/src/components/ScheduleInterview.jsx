@@ -1,5 +1,6 @@
 
 import React, { useState } from 'react';
+import { API_URL } from '../config/api';
 
 const ScheduleInterview = ({
     job,
@@ -109,7 +110,7 @@ const ScheduleInterview = ({
 
         try {
             const res = await fetch(
-                'http://localhost:5000/api/interviews/schedule',
+                '${API_URL}/api/interviews/schedule',
                 {
                     method: 'POST',
                     headers: {

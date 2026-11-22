@@ -2,9 +2,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import io from 'socket.io-client';
 import { useLanguage } from '../context/LanguageContext';
+import { API_URL as BASE_URL } from '../config/api';
 
-const BASE_URL = 'http://localhost:5000';
-const API_URL = `${BASE_URL}/api/messages`;
 
 const Messages = ({ user, setCurrentPage }) => {
     const { language } = useLanguage();
@@ -73,7 +72,7 @@ const Messages = ({ user, setCurrentPage }) => {
 
         try {
             const response = await fetch(
-                `${API_URL}/conversations/${user.id}`,
+                `${BASE_URL}/api/messages/conversations/${user.id}`,
                 {
                     method: 'GET',
                     headers: getAuthHeaders()
@@ -137,7 +136,7 @@ const Messages = ({ user, setCurrentPage }) => {
             setError('');
 
             const response = await fetch(
-                `${API_URL}/${user.id}/${otherUser.other_user_id}`,
+                `${BASE_URL}/api/messages/${user.id}/${otherUser.other_user_id}`,
                 {
                     method: 'GET',
                     headers: getAuthHeaders()

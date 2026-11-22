@@ -10,8 +10,7 @@ import { useLanguage } from '../context/LanguageContext';
 import ChangePassword from './ChangePassword';
 import Chat from './Chat';
 import io from 'socket.io-client';
-
-const API_URL = 'http://localhost:5000';
+import { API_URL } from '../config/api';
 
 const Navbar = ({
     user,

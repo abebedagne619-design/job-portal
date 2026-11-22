@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { API_URL } from '../config/api';
 
 const AnalyticsDashboard = () => {
     const [popularJobs, setPopularJobs] = useState([]);
@@ -13,11 +14,10 @@ const AnalyticsDashboard = () => {
     const fetchAnalytics = async () => {
         try {
             const [popularRes, typeRes, timelineRes] = await Promise.all([
-                fetch('http://localhost:5000/api/analytics/popular-jobs'),
-                fetch('http://localhost:5000/api/analytics/jobs-by-type'),
-                fetch('http://localhost:5000/api/analytics/applications-timeline')
-            ]);
-            
+    fetch(`${API_URL}/api/analytics/popular-jobs`),
+    fetch(`${API_URL}/api/analytics/jobs-by-type`),
+    fetch(`${API_URL}/api/analytics/applications-timeline`)
+]);
             setPopularJobs(await popularRes.json());
             setJobsByType(await typeRes.json());
             setTimeline(await timelineRes.json());

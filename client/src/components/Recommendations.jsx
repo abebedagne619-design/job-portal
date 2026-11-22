@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useLanguage } from '../context/LanguageContext';
+import { API_URL } from '../config/api';
 
 const Recommendations = ({ user }) => {
     const { language } = useLanguage();
@@ -34,7 +35,7 @@ const Recommendations = ({ user }) => {
                 : [];
 
             const res = await fetch(
-                'http://localhost:5000/api/recommendations/skills',
+                `${API_URL}/api/recommendations/skills`,
                 {
                     method: 'POST',
                     headers: {
@@ -89,7 +90,7 @@ const Recommendations = ({ user }) => {
 
         try {
             const res = await fetch(
-                'http://localhost:5000/api/recommendations/cv',
+                `${API_URL}/api/recommendations/cv`,
                 {
                     method: 'POST',
                     body: formData
@@ -135,7 +136,7 @@ const Recommendations = ({ user }) => {
             const token = sessionStorage.getItem('token');
 
             const res = await fetch(
-                `http://localhost:5000/api/users/${user.id}/skills`,
+                `${API_URL}/api/users/${user.id}/skills`,
                 {
                     headers: {
                         Authorization: `Bearer ${token}`
@@ -169,7 +170,7 @@ const Recommendations = ({ user }) => {
 
         try {
             const res = await fetch(
-                'http://localhost:5000/api/recommendations/skills',
+                `${API_URL}/api/recommendations/skills`,
                 {
                     method: 'POST',
                     headers: {
@@ -216,7 +217,7 @@ const Recommendations = ({ user }) => {
 
         try {
             const res = await fetch(
-                'http://localhost:5000/api/recommendations/skills',
+                `${API_URL}/api/recommendations/skills`,
                 {
                     method: 'POST',
                     headers: {

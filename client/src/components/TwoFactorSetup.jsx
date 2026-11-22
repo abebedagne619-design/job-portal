@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { API_URL } from '../config/api';
 
 const TwoFactorSetup = ({ user, onComplete }) => {
     const [qrCode, setQrCode] = useState('');
@@ -10,7 +11,7 @@ const TwoFactorSetup = ({ user, onComplete }) => {
     const setup2FA = async () => {
         setLoading(true);
         try {
-            const res = await fetch('http://localhost:5000/api/2fa/setup', {
+            const res = await fetch(`${API_URL}/api/2fa/setup`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ userId: user.id, email: user.email })
@@ -29,7 +30,7 @@ const TwoFactorSetup = ({ user, onComplete }) => {
     const verify2FA = async () => {
         setLoading(true);
         try {
-            const res = await fetch('http://localhost:5000/api/2fa/verify', {
+            const res = await fetch(`${API_URL}/api/2fa/verify`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ userId: user.id, token })
