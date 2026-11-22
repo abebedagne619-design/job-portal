@@ -118,10 +118,11 @@ const pool = mysql.createPool({
     port: Number(process.env.DB_PORT || 3307),
 
     // Enable TLS only for the cloud database
-    ssl: process.env.DB_HOST
-        ? { minVersion: 'TLSv1.2' }
-        : undefined,
-
+    ssl: process.env.DB_HOST &&
+     process.env.DB_HOST !== '127.0.0.1' &&
+     process.env.DB_HOST !== 'localhost'
+    ? { minVersion: 'TLSv1.2' }
+    : undefined,
     waitForConnections: true,
     connectionLimit: 15,
     queueLimit: 0,

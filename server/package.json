@@ -11,9 +11,6 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@react-native-async-storage/async-storage": "^3.0.2",
-    "@react-navigation/native": "^7.2.2",
-    "@react-navigation/stack": "^7.8.10",
     "axios": "^1.15.2",
     "bcryptjs": "^3.0.3",
     "compression": "^1.8.1",
@@ -31,14 +28,12 @@
     "mysql2": "^3.22.0",
     "node-cron": "^4.2.1",
     "node-fetch": "^3.3.2",
-    "nodemailer": "^8.0.7",
+    "nodemailer": "^10.6.1",
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
     "pdf-parse": "^2.4.5",
     "pdfkit": "^0.18.0",
     "qrcode": "^1.5.4",
-    "react-native-vector-icons": "^10.3.0",
-    "sharp": "^0.34.5",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
     "speakeasy": "^2.0.0",
@@ -50,5 +45,8 @@
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
+  },
+  "overrides": {
+    "qs": "^6.16.2"
   }
 }
