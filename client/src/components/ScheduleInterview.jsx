@@ -25,7 +25,6 @@ const ScheduleInterview = ({
         String(now.getDate()).padStart(2, '0')
     ].join('-');
 
-    // Validate Meeting URL
     const isValidMeetingLink = (value) => {
         try {
             const url = new URL(value.trim());
@@ -85,12 +84,6 @@ const ScheduleInterview = ({
             return alert('እባክዎ የInterview ቦታ ያስገቡ!');
         }
 
-        const token = sessionStorage.getItem('token');
-
-        if (!token) {
-            return alert('❌ Login session አልተገኘም። Login ያድርጉ።');
-        }
-
         setLoading(true);
 
         const dateTime = `${scheduledDate} ${scheduledTime}:00`;
@@ -110,12 +103,13 @@ const ScheduleInterview = ({
 
         try {
             const res = await fetch(
-                '${API_URL}/api/interviews/schedule',
+                `${API_URL}/api/interviews/schedule`,
                 {
                     method: 'POST',
+                    credentials: 'include',
+                    cache: 'no-store',
                     headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${token}`
+                        'Content-Type': 'application/json'
                     },
                     body: JSON.stringify(interviewData)
                 }

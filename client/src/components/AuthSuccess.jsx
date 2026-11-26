@@ -1,64 +1,67 @@
+
 import React, { useEffect } from 'react';
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
 const AuthSuccess = () => {
     useEffect(() => {
-        // 1. ከ URL ላይ ቶከን እና የተጠቃሚ መረጃን እናወጣለን
-        const urlParams = new URLSearchParams(window.location.search);
-        const token = urlParams.get('token');
-        const userParam = urlParams.get('user');
-        
-        // ለፍተሻ በኮንሶል ላይ እናሳያለን
-        console.log("Token received:", !!token);
-        console.log("User data received:", !!userParam);
+        let isMounted = true;
 
-        if (token && userParam) {
+        const verifyGoogleLogin = async () => {
             try {
-                // 2. የተጠቃሚውን መረጃ ከ URL Decode አድርገን ወደ JSON እንቀይራለን
-                const user = JSON.parse(userParam);
-                
-                // 3. መረጃውን በ localStorage ውስጥ እናስቀምጣለን (App.jsx እንዲያነበው)
-                sessionStorage.setItem('token', token);
-                sessionStorage.setItem('user', JSON.stringify(user));
-                
-                console.log("Login successful! Redirecting to home...");
+                const response = await fetch(`${API_URL}/api/auth/me`, {
+                    method: 'GET',
+                    credentials: 'include',
+                    cache: 'no-store'
+                });
 
-                // 4. ወደ ዋናው ገጽ እንልካለን
-                // 'replace' መጠቀምህ ተጠቃሚው ወደ ኋላ ሲመለስ መልሶ እዚህ ገጽ ላይ እንዳይመጣ ያደርጋል
-                window.location.replace('/'); 
-            } catch (err) {
-                console.error('Error processing login data:', err);
-                window.location.replace('/login');
+                const data = await response.json();
+
+                if (!response.ok || !data.success || !data.data) {
+                    throw new Error('Google authentication verification failed');
+                }
+
+                if (isMounted) {
+                    sessionStorage.setItem('user', JSON.stringify(data.data));
+                    window.location.replace('/');
+                }
+            } catch (error) {
+                console.error('Google login verification error:', error);
+
+                if (isMounted) {
+                    sessionStorage.removeItem('user');
+                    sessionStorage.removeItem('token');
+                    window.location.replace('/login');
+                }
             }
-        } else {
-            // መረጃው ካልመጣ ከ1 ሰከንድ በኋላ ወደ ሎጊን ይመለሳል
-            console.error('Missing token or user data in URL');
-            const timeout = setTimeout(() => {
-                window.location.replace('/login');
-            }, 1500);
-            return () => clearTimeout(timeout);
-        }
+        };
+
+        verifyGoogleLogin();
+
+        return () => {
+            isMounted = false;
+        };
     }, []);
 
-    // የገጹ ስታይል (Loading Screen)
     const styles = {
-        container: { 
-            display: 'flex', 
-            justifyContent: 'center', 
-            alignItems: 'center', 
-            height: '100vh', 
-            background: '#0a3d0a', // ያንተ አረንጓዴ Background
+        container: {
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            height: '100vh',
+            background: '#0a3d0a',
             fontFamily: 'Segoe UI, Tahoma, Geneva, Verdana, sans-serif'
         },
-        content: { 
-            textAlign: 'center', 
-            color: '#fff' 
+        content: {
+            textAlign: 'center',
+            color: '#fff'
         },
-        spinner: { 
-            fontSize: '3.5rem', 
+        spinner: {
+            fontSize: '3.5rem',
             color: '#2ecc71',
             marginBottom: '1rem'
         },
-        text: { 
+        text: {
             fontSize: '1.2rem',
             fontWeight: '500'
         }
@@ -67,10 +70,12 @@ const AuthSuccess = () => {
     return (
         <div style={styles.container}>
             <div style={styles.content}>
-                {/* FontAwesome Spinner ካለህ እንዲዞር ያደርገዋል */}
-                <i className="fas fa-circle-notch fa-spin" style={styles.spinner}></i>
+                <i
+                    className="fas fa-circle-notch fa-spin"
+                    style={styles.spinner}
+                ></i>
                 <h2 style={styles.text}>Completing sign in...</h2>
-                <p style={{color: '#888'}}>Please wait a moment.</p>
+                <p style={{ color: '#888' }}>Please wait a moment.</p>
             </div>
         </div>
     );

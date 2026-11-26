@@ -32,23 +32,32 @@ const setSocketIO = (io) => {
 // ==========================================
 // AUTHENTICATION
 // ==========================================
+
 const authenticateUser = async (req, res, next) => {
     try {
-        const authHeader = req.headers.authorization;
+        const token = req.cookies?.token;
 
-        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        if (!token) {
             return res.status(401).json({
                 success: false,
-                message: 'Authentication token is required'
+                message: 'Authentication cookie is required'
             });
         }
 
-        const token = authHeader.split(' ')[1];
+        const secret = process.env.JWT_SECRET;
 
-        const decoded = jwt.verify(
-            token,
-            process.env.JWT_SECRET || 'jobportal_secret_key_2024'
-        );
+        if (!secret) {
+            throw new Error('JWT_SECRET is not configured');
+        }
+
+        const decoded = jwt.verify(token, secret);
+
+        if (!decoded?.id) {
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid authentication token'
+            });
+        }
 
         const [users] = await promisePool.query(
             'SELECT id, name, email, role FROM users WHERE id = ?',
@@ -66,14 +75,18 @@ const authenticateUser = async (req, res, next) => {
         next();
 
     } catch (err) {
-        console.error('Notification authentication error:', err);
+        console.error(
+            'Notification authentication error:',
+            err.message
+        );
 
         return res.status(401).json({
             success: false,
-            message: 'Invalid or expired token'
+            message: 'Invalid or expired authentication cookie'
         });
     }
 };
+
 
 // ==========================================
 // CREATE GLOBAL NOTIFICATION

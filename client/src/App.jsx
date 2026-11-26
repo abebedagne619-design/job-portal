@@ -201,78 +201,28 @@ function AppContent() {
 
     }, [location.pathname]);
 
+    
     // ==========================================
     // CHECK EXISTING USER SESSION
     // ==========================================
 
     useEffect(() => {
-
         let active = true;
 
         const checkSession = async () => {
-
-            const savedUser = sessionStorage.getItem('user');
-            const token = sessionStorage.getItem('token');
-
-            if (!savedUser || !token) {
-
-                if (savedUser || token) {
-                    sessionStorage.removeItem('user');
-                    sessionStorage.removeItem('token');
-                }
-
-                if (active) {
-                    setUser(null);
-                    setSessionChecked(true);
-                }
-
-                return;
-            }
-
-            let parsedUser;
-
             try {
-
-                parsedUser = JSON.parse(savedUser);
-
-            } catch (error) {
-
-                console.error(
-                    'Invalid saved user data:',
-                    error
-                );
-
-                sessionStorage.removeItem('user');
-                sessionStorage.removeItem('token');
-
-                if (active) {
-                    setUser(null);
-                    setSessionChecked(true);
-                }
-
-                return;
-            }
-
-            try {
-
                 const res = await fetch(`${API_URL}/api/auth/me`, {
                     method: 'GET',
-                    cache: 'no-store',
-                    headers: {
-                        Authorization: `Bearer ${token}`
-                    }
+                    credentials: 'include',
+                    cache: 'no-store'
                 });
+
+                const data = await res.json();
 
                 if (!active) return;
 
-                if (res.ok) {
-
-                    const data = await res.json();
-
-                    const verifiedUser =
-                        data?.data ||
-                        data?.user ||
-                        parsedUser;
+                if (res.ok && data?.success && data?.data) {
+                    const verifiedUser = data.data;
 
                     setUser(verifiedUser);
 
@@ -281,41 +231,29 @@ function AppContent() {
                         JSON.stringify(verifiedUser)
                     );
 
-                } else {
-
-                    // Invalid token: clear session.
-                    // Do not force the visitor to Login.
-                    sessionStorage.removeItem('user');
+                    // Remove any old JWT stored by the previous system.
                     sessionStorage.removeItem('token');
 
+                } else {
+                    sessionStorage.removeItem('user');
+                    sessionStorage.removeItem('token');
                     setUser(null);
-
                 }
 
             } catch (error) {
-
-                // Network error:
-                // Preserve the saved session information.
-                // Do not delete the token because the server
-                // may temporarily be unavailable.
-
-                console.error(
-                    'Session verification error:',
-                    error
-                );
+                console.error('Session verification error:', error);
 
                 if (active) {
-                    setUser(parsedUser);
+                    sessionStorage.removeItem('user');
+                    sessionStorage.removeItem('token');
+                    setUser(null);
                 }
 
             } finally {
-
                 if (active) {
                     setSessionChecked(true);
                 }
-
             }
-
         };
 
         checkSession();
@@ -515,33 +453,22 @@ function AppContent() {
 
             // 5. Send subscription to backend.
 
-            const token = sessionStorage.getItem('token');
+// 5. Send subscription to backend.
 
-            if (!token) {
+const response = await fetch(
+    `${API_URL}/api/notifications/subscribe`,
+    {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            subscription
+        })
+    }
+);
 
-                throw new Error(
-                    'Authentication token is missing.'
-                );
-
-            }
-
-            const response = await fetch(
-                `${API_URL}/api/notifications/subscribe`,
-                {
-
-                    method: 'POST',
-
-                    headers: {
-                        'Content-Type': 'application/json',
-                        Authorization: `Bearer ${token}`
-                    },
-
-                    body: JSON.stringify({
-                        subscription
-                    })
-
-                }
-            );
 
             const data = await response.json();
 
@@ -588,71 +515,56 @@ function AppContent() {
     };
 
     // ==========================================
-    // FETCH JOBS
-    // PUBLIC: LOGIN IS NOT REQUIRED
-    // ==========================================
+// FETCH JOBS
+// PUBLIC: LOGIN IS NOT REQUIRED
+// ==========================================
 
-    const fetchJobs = async () => {
+const fetchJobs = async () => {
 
-        setLoading(true);
+    setLoading(true);
 
-        try {
+    try {
 
-            const token = sessionStorage.getItem('token');
+        const url = search
+            ? `${API_URL}/api/jobs?search=${encodeURIComponent(search)}`
+            : `${API_URL}/api/jobs`;
 
-            const url = search
-                ? `${API_URL}/api/jobs?search=${encodeURIComponent(search)}`
-                : `${API_URL}/api/jobs`;
+        const res = await fetch(url, {
+            method: 'GET'
+        });
 
-            const headers = {};
+        const data = await res.json();
 
-            if (token) {
-                headers.Authorization = `Bearer ${token}`;
-            }
-
-            const res = await fetch(url, {
-
-                method: 'GET',
-
-                headers
-
-            });
-
-            const data = await res.json();
-
-            if (!res.ok) {
-
-                throw new Error(
-                    data.message || 'Failed to fetch jobs'
-                );
-
-            }
-
-            const jobsData = Array.isArray(data)
-                ? data
-                : Array.isArray(data.data)
-                    ? data.data
-                    : [];
-
-            setJobs(jobsData);
-
-        } catch (error) {
-
-            console.error(
-                'Error fetching jobs:',
-                error
+        if (!res.ok) {
+            throw new Error(
+                data.message || 'Failed to fetch jobs'
             );
-
-            setJobs([]);
-
-        } finally {
-
-            setLoading(false);
-
         }
 
-    };
+        const jobsData = Array.isArray(data)
+            ? data
+            : Array.isArray(data.data)
+                ? data.data
+                : [];
 
+        setJobs(jobsData);
+
+    } catch (error) {
+
+        console.error(
+            'Error fetching jobs:',
+            error
+        );
+
+        setJobs([]);
+
+    } finally {
+
+        setLoading(false);
+
+    }
+
+};
     // ==========================================
     // FETCH EMPLOYER APPLICATIONS
     // ==========================================
@@ -663,20 +575,14 @@ function AppContent() {
 
         try {
 
-            const token = sessionStorage.getItem('token');
-
-            const res = await fetch(
-                `${API_URL}/api/applications/employer/${user.id}`,
-                {
-                    method: 'GET',
-
-                    headers: {
-                        Authorization: token
-                            ? `Bearer ${token}`
-                            : ''
-                    }
-                }
-            );
+           const res = await fetch(
+    `${API_URL}/api/applications/employer/${user.id}`,
+    {
+        method: 'GET',
+        credentials: 'include',
+        cache: 'no-store'
+    }
+);
 
             const data = await res.json();
 
@@ -738,7 +644,7 @@ function AppContent() {
 
         try {
 
-            const token = sessionStorage.getItem('token');
+           
 
             const params = new URLSearchParams();
 
@@ -768,22 +674,14 @@ function AppContent() {
                 params.append('maxSalary', maxSalary);
             }
 
-            const headers = {};
-
-            if (token) {
-                headers.Authorization = `Bearer ${token}`;
-            }
+            
 
             const res = await fetch(
-                `${API_URL}/api/jobs/search?${params.toString()}`,
-                {
-
-                    method: 'GET',
-
-                    headers
-
-                }
-            );
+    `${API_URL}/api/jobs/search?${params.toString()}`,
+    {
+        method: 'GET'
+    }
+);
 
             const data = await res.json();
 
@@ -873,7 +771,7 @@ function AppContent() {
 
         try {
 
-            const token = sessionStorage.getItem('token');
+            
 
             // Include jobId if the form has not already added it.
 
@@ -893,11 +791,7 @@ function AppContent() {
 
                     method: 'POST',
 
-                    headers: {
-                        Authorization: token
-                            ? `Bearer ${token}`
-                            : ''
-                    },
+                   credentials: 'include',
 
                     body: formData
 
@@ -946,6 +840,7 @@ function AppContent() {
 
     };
 
+   
     // ==========================================
     // REGISTER FUNCTION
     // ==========================================
@@ -957,15 +852,15 @@ function AppContent() {
             const res = await fetch(
                 `${API_URL}/api/auth/register`,
                 {
-
                     method: 'POST',
+
+                    credentials: 'include',
 
                     headers: {
                         'Content-Type': 'application/json'
                     },
 
                     body: JSON.stringify(userData)
-
                 }
             );
 
@@ -979,25 +874,19 @@ function AppContent() {
                 );
 
                 return false;
-
             }
 
             const userInfo =
                 data?.data?.user ||
                 data?.user;
 
-            const token =
-                data?.data?.token ||
-                data?.token;
-
-            if (!userInfo || !token) {
+            if (!userInfo) {
 
                 console.error(
-                    'Registration response is missing user or token.'
+                    'Registration response is missing user information.'
                 );
 
                 return false;
-
             }
 
             setUser(userInfo);
@@ -1007,10 +896,10 @@ function AppContent() {
                 JSON.stringify(userInfo)
             );
 
-            sessionStorage.setItem(
-                'token',
-                token
-            );
+            // JWT is stored in the HttpOnly Cookie.
+            // Do not store the token in sessionStorage.
+
+            sessionStorage.removeItem('token');
 
             setCurrentPage('jobs');
 
@@ -1026,11 +915,11 @@ function AppContent() {
             );
 
             return false;
-
         }
-
     };
 
+
+  
     // ==========================================
     // LOGIN FUNCTION
     // ==========================================
@@ -1042,15 +931,15 @@ function AppContent() {
             const res = await fetch(
                 `${API_URL}/api/auth/login`,
                 {
-
                     method: 'POST',
+
+                    credentials: 'include',
 
                     headers: {
                         'Content-Type': 'application/json'
                     },
 
                     body: JSON.stringify(credentials)
-
                 }
             );
 
@@ -1064,25 +953,19 @@ function AppContent() {
                 );
 
                 return false;
-
             }
 
             const userInfo =
                 data?.data?.user ||
                 data?.user;
 
-            const token =
-                data?.data?.token ||
-                data?.token;
-
-            if (!userInfo || !token) {
+            if (!userInfo) {
 
                 console.error(
-                    'Login response is missing user or token.'
+                    'Login response is missing user information.'
                 );
 
                 return false;
-
             }
 
             setUser(userInfo);
@@ -1092,10 +975,10 @@ function AppContent() {
                 JSON.stringify(userInfo)
             );
 
-            sessionStorage.setItem(
-                'token',
-                token
-            );
+            // JWT is stored in the HttpOnly Cookie.
+            // Do not store the token in sessionStorage.
+
+            sessionStorage.removeItem('token');
 
             setCurrentPage('jobs');
 
@@ -1111,36 +994,50 @@ function AppContent() {
             );
 
             return false;
-
         }
-
     };
+
 
     // ==========================================
     // LOGOUT FUNCTION
     // ==========================================
 
-    const handleLogout = () => {
+    const handleLogout = async () => {
 
-        setUser(null);
+        try {
 
-        sessionStorage.removeItem('user');
-        sessionStorage.removeItem('token');
+            await fetch(`${API_URL}/api/auth/logout`, {
+                method: 'POST',
+                credentials: 'include',
+                cache: 'no-store'
+            });
 
-        setCurrentPage('login');
+        } catch (error) {
 
-        setJobs([]);
+            console.error('Logout request error:', error);
 
-        setSelectedJob(null);
-        setShowApplyForm(false);
+        } finally {
 
-        setEmployerApplications([]);
+            setUser(null);
 
-        setPushStatus('disabled');
+            sessionStorage.removeItem('user');
+            sessionStorage.removeItem('token');
 
-        navigate('/login');
+            setCurrentPage('login');
 
+            setJobs([]);
+
+            setSelectedJob(null);
+            setShowApplyForm(false);
+
+            setEmployerApplications([]);
+
+            setPushStatus('disabled');
+
+            navigate('/login');
+        }
     };
+
 
     // ==========================================
     // MAIN STYLES

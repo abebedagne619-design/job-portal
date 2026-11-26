@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { API_URL } from '../config/api';
 
@@ -8,23 +9,25 @@ const SaveButton = ({ jobId, userId }) => {
     useEffect(() => {
         if (jobId && userId) {
             checkIfSaved();
+        } else {
+            setSaved(false);
         }
     }, [jobId, userId]);
 
     const checkIfSaved = async () => {
         try {
-            const token = sessionStorage.getItem('token');
-            
-            // ✅ ትክክለኛው API endpoint (user በtoken ይታወቃል)
             const res = await fetch(`${API_URL}/api/saved/check/${jobId}`, {
+                method: 'GET',
+                credentials: 'include',
+                cache: 'no-store',
                 headers: {
-                    'Authorization': token ? `Bearer ${token}` : '',
                     'Content-Type': 'application/json'
                 }
             });
-            
-            const contentType = res.headers.get("content-type");
-            if (res.ok && contentType && contentType.includes("application/json")) {
+
+            const contentType = res.headers.get('content-type');
+
+            if (res.ok && contentType && contentType.includes('application/json')) {
                 const data = await res.json();
                 setSaved(data.isSaved || false);
             } else {
@@ -36,22 +39,24 @@ const SaveButton = ({ jobId, userId }) => {
     };
 
     const toggleSave = async () => {
-        if (!userId) return alert("እባክሽ መጀመሪያ Login አድርጊ!");
-        
+        if (!userId) {
+            alert('እባክህ መጀመሪያ Login አድርግ!');
+            return;
+        }
+
         setLoading(true);
+
         try {
-            const token = sessionStorage.getItem('token');
-            
             if (saved) {
-                // ✅ ለማስወገድ - DELETE request with jobId in URL
                 const res = await fetch(`${API_URL}/api/saved/${jobId}`, {
                     method: 'DELETE',
+                    credentials: 'include',
+                    cache: 'no-store',
                     headers: {
-                        'Authorization': token ? `Bearer ${token}` : '',
                         'Content-Type': 'application/json'
                     }
                 });
-                
+
                 if (res.ok) {
                     setSaved(false);
                 } else {
@@ -60,16 +65,16 @@ const SaveButton = ({ jobId, userId }) => {
                     alert(error.message || 'Failed to remove job');
                 }
             } else {
-                // ✅ ለማስቀመጥ - POST request with job_id in body
                 const res = await fetch(`${API_URL}/api/saved`, {
                     method: 'POST',
+                    credentials: 'include',
+                    cache: 'no-store',
                     headers: {
-                        'Authorization': token ? `Bearer ${token}` : '',
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({ job_id: jobId })
                 });
-                
+
                 if (res.ok) {
                     setSaved(true);
                 } else {
@@ -85,6 +90,7 @@ const SaveButton = ({ jobId, userId }) => {
             setLoading(false);
         }
     };
+
     const styles = {
         button: {
             background: saved ? '#ef4444' : '#2ecc71',
@@ -105,7 +111,11 @@ const SaveButton = ({ jobId, userId }) => {
     };
 
     return (
-        <button style={styles.button} onClick={toggleSave} disabled={loading}>
+        <button
+            style={styles.button}
+            onClick={toggleSave}
+            disabled={loading}
+        >
             <span style={styles.icon}>
                 {loading ? '⏳' : (saved ? '✓' : '📌')}
             </span>

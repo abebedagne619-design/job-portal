@@ -42,14 +42,10 @@ const Messages = ({ user, setCurrentPage }) => {
     // =====================================
 
     const getAuthHeaders = useCallback(() => {
-        const token = sessionStorage.getItem('token');
-
-        return {
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {})
-        };
-    }, []);
-
+    return {
+        'Content-Type': 'application/json'
+    };
+}, []);
     // =====================================
     // NORMALIZE MESSAGE DATA
     // =====================================
@@ -74,9 +70,11 @@ const Messages = ({ user, setCurrentPage }) => {
             const response = await fetch(
                 `${BASE_URL}/api/messages/conversations/${user.id}`,
                 {
-                    method: 'GET',
-                    headers: getAuthHeaders()
-                }
+    method: 'GET',
+    credentials: 'include',
+    cache: 'no-store',
+    headers: getAuthHeaders()
+}
             );
 
             const result = await response.json();
@@ -101,13 +99,15 @@ const Messages = ({ user, setCurrentPage }) => {
 
     const fetchUsers = useCallback(async () => {
         try {
-            const response = await fetch(
-                `${BASE_URL}/api/users`,
-                {
-                    method: 'GET',
-                    headers: getAuthHeaders()
-                }
-            );
+          const response = await fetch(
+    `${BASE_URL}/api/users`,
+    {
+        method: 'GET',
+        credentials: 'include',
+        cache: 'no-store',
+        headers: getAuthHeaders()
+    }
+);
 
             const result = await response.json();
 
@@ -138,9 +138,11 @@ const Messages = ({ user, setCurrentPage }) => {
             const response = await fetch(
                 `${BASE_URL}/api/messages/${user.id}/${otherUser.other_user_id}`,
                 {
-                    method: 'GET',
-                    headers: getAuthHeaders()
-                }
+    method: 'GET',
+    credentials: 'include',
+    cache: 'no-store',
+    headers: getAuthHeaders()
+}
             );
 
             const result = await response.json();
@@ -171,26 +173,19 @@ const Messages = ({ user, setCurrentPage }) => {
         }
     }, [user, getAuthHeaders, normalizeMessage, fetchConversations, isAmharic]);
 
-    // =====================================
+        // =====================================
     // SOCKET.IO CONNECTION
     // =====================================
 
     useEffect(() => {
         if (!user?.id) return;
 
-        const token = sessionStorage.getItem('token');
-
-        if (!token) {
-            setError(text('Authentication token not found. Please log in again.', 'የመግቢያ Token አልተገኘም። እንደገና ይግቡ።'));
-            return;
-        }
-
         const newSocket = io(BASE_URL, {
             transports: ['polling'],
             reconnection: true,
             reconnectionAttempts: 5,
             reconnectionDelay: 1000,
-            auth: { token }
+            withCredentials: true
         });
 
         socket.current = newSocket;
@@ -208,79 +203,69 @@ const Messages = ({ user, setCurrentPage }) => {
         newSocket.on('connect_error', (err) => {
             console.error('Messages socket error:', err.message);
             setSocketConnected(false);
+
             setError(text(
                 'Connection problem. Please check your server and login.',
                 'የግንኙነት ችግር አለ። Server እና Login ያረጋግጡ።'
             ));
         });
 
-        // Receive new messages.
         newSocket.on('new-message', (data) => {
-            console.log('NEW MESSAGE RECEIVED:', data);
             const incoming = normalizeMessage(data);
             const currentChat = selectedUserRef.current;
-            console.log('CURRENT CHAT:', currentChat);
-            console.log('CURRENT USER ID:', user.id);
 
             if (currentChat) {
-    const senderId = String(incoming.sender_id);
-    const receiverId = String(incoming.receiver_id);
-    const currentUserId = String(user.id);
-    const otherUserId = String(currentChat.other_user_id);
+                const senderId = String(incoming.sender_id);
+                const receiverId = String(incoming.receiver_id);
+                const currentUserId = String(user.id);
+                const otherUserId = String(currentChat.other_user_id);
 
-    const belongsToCurrentChat =
-        (senderId === currentUserId && receiverId === otherUserId) ||
-        (senderId === otherUserId && receiverId === currentUserId);
+                const belongsToCurrentChat =
+                    (senderId === currentUserId && receiverId === otherUserId) ||
+                    (senderId === otherUserId && receiverId === currentUserId);
 
-    console.log('MESSAGE ROUTING CHECK:', {
-        incomingSender: senderId,
-        incomingReceiver: receiverId,
-        currentUser: currentUserId,
-        selectedChatUser: otherUserId,
-        belongsToCurrentChat
-    });
+                if (belongsToCurrentChat) {
+                    setMessages(previous => {
+                        const alreadyExists = previous.some(
+                            msg => String(msg.id) === String(incoming.id)
+                        );
 
-    if (belongsToCurrentChat) {
-        setMessages(previous => {
-            const alreadyExists = previous.some(
-                msg => String(msg.id) === String(incoming.id)
-            );
+                        if (alreadyExists) return previous;
 
-            if (alreadyExists) return previous;
+                        return [...previous, incoming];
+                    });
 
-            return [...previous, incoming];
-        });
-
-        if (senderId === otherUserId) {
-            newSocket.emit('mark-read', {
-                otherUserId: currentChat.other_user_id
-            });
-        }
-    }
-}
+                    if (senderId === otherUserId) {
+                        newSocket.emit('mark-read', {
+                            otherUserId: currentChat.other_user_id
+                        });
+                    }
+                }
+            }
 
             fetchConversations();
         });
 
         newSocket.on('message-sent', (result) => {
-    console.log('MESSAGE SENT ACK RECEIVED:', result);
+            if (result?.success) {
+                setSending(false);
+                setError('');
+                fetchConversations();
+            }
+        });
 
-    if (result?.success) {
-        setSending(false);
-        setError('');
-        fetchConversations();
-    }
-});
+        newSocket.on('message-error', (result) => {
+            setSending(false);
 
-newSocket.on('message-error', (result) => {
-    console.error('MESSAGE ERROR RECEIVED:', result);
+            setError(
+                result?.message ||
+                text(
+                    'Message could not be sent.',
+                    'መልዕክቱን መላክ አልተቻለም።'
+                )
+            );
+        });
 
-    setSending(false);
-    setError(
-        result?.message ||
-        text('Message could not be sent.', 'መልዕክቱን መላክ አልተቻለም።')
-    );
-});
         return () => {
             newSocket.removeAllListeners();
             newSocket.disconnect();
@@ -291,8 +276,8 @@ newSocket.on('message-error', (result) => {
 
             setSocketConnected(false);
         };
-    }, [user, normalizeMessage, fetchConversations, isAmharic]);
 
+    }, [user, normalizeMessage, fetchConversations, isAmharic]);
     // =====================================
     // INITIAL DATA
     // =====================================

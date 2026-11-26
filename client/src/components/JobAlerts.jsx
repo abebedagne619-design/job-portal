@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { API_URL } from '../config/api';
 
@@ -8,62 +9,54 @@ const JobAlerts = ({ user }) => {
     const [loading, setLoading] = useState(false);
 
     const createAlert = async () => {
-        // ተጠቃሚው መግባቱን ማረጋገጥ
         if (!user?.id) {
-            alert('⚠️ Please login to create job alerts');
+            alert('Please login to create job alerts');
             return;
         }
 
-        // ቢያንስ አንድ መስፈርት መሞላቱን ማረጋገጥ
         if (!keyword && !location && !jobType) {
-            alert('⚠️ Please fill at least one field');
+            alert('Please fill at least one field');
             return;
         }
 
         setLoading(true);
-        try {
-            // ✅ Token ከ localStorage አምጣ
-            const token = sessionStorage.getItem('token');
-            
-            console.log('📤 Sending alert:', { keyword, location, type: jobType });
-            console.log('🔑 Token:', token ? 'Exists' : 'Missing!');
 
-            const res = await fetch('${API_URL}/api/alerts', {
+        try {
+            const res = await fetch(`${API_URL}/api/alerts`, {
                 method: 'POST',
-                headers: { 
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`   // ✅ Token ጨምር!
+                credentials: 'include',
+                cache: 'no-store',
+                headers: {
+                    'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ 
-                    // ✅ 'user_id' አትላክ - Backend ከ JWT ያገኘዋል!
-                    keyword, 
-                    location, 
-                    type: jobType   // ✅ 'jobType' ሳይሆን 'type'
+                body: JSON.stringify({
+                    keyword,
+                    location,
+                    type: jobType
                 })
             });
 
+            const data = await res.json();
+
             if (res.ok) {
-                const data = await res.json();
-                console.log('✅ Alert created:', data);
-                alert('🚀 Job alert created successfully!');
-                // ፎርሙን ባዶ ማድረግ
+                alert('Job alert created successfully!');
                 setKeyword('');
                 setLocation('');
                 setJobType('');
             } else {
-                const errorData = await res.json();
-                console.error('❌ Server error:', errorData);
-                alert(`Failed: ${errorData.error || 'Unknown error'}`);
+                console.error('Server error:', data);
+                alert(`Failed: ${data.error || data.message || 'Unknown error'}`);
             }
+
         } catch (err) {
-            console.error('❌ Error creating alert:', err);
+            console.error('Error creating alert:', err);
             alert('Failed to create alert. Please try again.');
+
         } finally {
             setLoading(false);
         }
     };
 
-    // የዲዛይን ስታይል
     const styles = {
         container: {
             background: 'rgba(30, 60, 30, 0.8)',
@@ -100,35 +93,41 @@ const JobAlerts = ({ user }) => {
 
     return (
         <div style={styles.container}>
-            <h3 style={{ color: '#2ecc71', marginBottom: '1.5rem' }}>🔔 Create Job Alert</h3>
-            
+            <h3 style={{ color: '#2ecc71', marginBottom: '1.5rem' }}>
+                🔔 Create Job Alert
+            </h3>
+
             <label>Keyword</label>
-            <input 
+            <input
                 style={styles.input}
-                placeholder="e.g., React, Designer" 
-                value={keyword} 
-                onChange={(e) => setKeyword(e.target.value)} 
+                placeholder="e.g., React, Designer"
+                value={keyword}
+                onChange={(e) => setKeyword(e.target.value)}
             />
-            
+
             <label>Location</label>
-            <input 
+            <input
                 style={styles.input}
-                placeholder="e.g., Addis Ababa, Remote" 
-                value={location} 
-                onChange={(e) => setLocation(e.target.value)} 
+                placeholder="e.g., Addis Ababa, Remote"
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
             />
-            
+
             <label>Job Type</label>
-            <select style={styles.input} value={jobType} onChange={(e) => setJobType(e.target.value)}>
+            <select
+                style={styles.input}
+                value={jobType}
+                onChange={(e) => setJobType(e.target.value)}
+            >
                 <option value="">All Types</option>
                 <option value="Full-time">Full-time</option>
                 <option value="Part-time">Part-time</option>
                 <option value="Remote">Remote</option>
                 <option value="Contract">Contract</option>
             </select>
-            
-            <button 
-                style={styles.button} 
+
+            <button
+                style={styles.button}
                 onClick={createAlert}
                 disabled={loading}
             >

@@ -13,10 +13,15 @@ const AnalyticsDashboard = () => {
 
     const fetchAnalytics = async () => {
         try {
-            const [popularRes, typeRes, timelineRes] = await Promise.all([
-    fetch(`${API_URL}/api/analytics/popular-jobs`),
-    fetch(`${API_URL}/api/analytics/jobs-by-type`),
-    fetch(`${API_URL}/api/analytics/applications-timeline`)
+const fetchOptions = {
+    credentials: 'include',
+    cache: 'no-store'
+};
+
+const [popularRes, typeRes, timelineRes] = await Promise.all([
+    fetch(`${API_URL}/api/analytics/popular-jobs`, fetchOptions),
+    fetch(`${API_URL}/api/analytics/jobs-by-type`, fetchOptions),
+    fetch(`${API_URL}/api/analytics/applications-timeline`, fetchOptions)
 ]);
             setPopularJobs(await popularRes.json());
             setJobsByType(await typeRes.json());

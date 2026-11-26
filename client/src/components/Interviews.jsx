@@ -21,9 +21,7 @@ const Interviews = ({ user }) => {
     const [error, setError] = useState('');
     const [processingId, setProcessingId] = useState(null);
 
-    const getToken = () => {
-        return sessionStorage.getItem('token');
-    };
+   
 
     // FETCH INTERVIEWS
     const fetchInterviews = async () => {
@@ -36,16 +34,7 @@ const Interviews = ({ user }) => {
             setLoading(true);
             setError('');
 
-            const token = getToken();
-
-            if (!token) {
-                setError(
-                    isAmharic
-                        ? 'እባክዎ እንደገና Login ያድርጉ።'
-                        : 'Please login again.'
-                );
-                return;
-            }
+            
 
             const endpoint = isAdmin
     ? `${API_URL}/api/interviews/user/${user.id}`
@@ -54,12 +43,13 @@ const Interviews = ({ user }) => {
         : `${API_URL}/api/interviews/user/${user.id}`;
 
             const response = await fetch(endpoint, {
-                method: 'GET',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                }
-            });
+    method: 'GET',
+    credentials: 'include',
+    cache: 'no-store',
+    headers: {
+        'Content-Type': 'application/json'
+    }
+});
 
             const data = await response.json();
 
@@ -103,17 +93,17 @@ const Interviews = ({ user }) => {
             setMessage('');
             setError('');
 
-            const token = getToken();
+           
 
             const response = await fetch(
                 `${API_URL}/api/interviews/accept/${interviewId}`,
                 {
-                    method: 'PUT',
-                    headers: {
-                        'Authorization': `Bearer ${token}`,
-                        'Content-Type': 'application/json'
-                    }
-                }
+    method: 'PUT',
+    credentials: 'include',
+    headers: {
+        'Content-Type': 'application/json'
+    }
+}
             );
 
             const data = await response.json();
@@ -166,19 +156,19 @@ const Interviews = ({ user }) => {
             setMessage('');
             setError('');
 
-            const token = getToken();
+            
 
             const response = await fetch(
-                `${API_URL}/api/interviews/decline/${interviewId}`,
-                {
-                    method: 'PUT',
-                    headers: {
-                        'Authorization': `Bearer ${token}`,
-                        'Content-Type': 'application/json'
-                    }
-                }
-            );
-
+    `${API_URL}/api/interviews/decline/${interviewId}`,
+    {
+        method: 'PUT',
+        credentials: 'include',
+        cache: 'no-store',
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    }
+);
             const data = await response.json();
 
             if (!response.ok) {

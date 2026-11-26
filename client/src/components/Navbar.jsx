@@ -49,16 +49,11 @@ const Navbar = ({
     // ==========================================
     // AUTHENTICATION HEADERS
     // ==========================================
-    const getAuthHeaders = useCallback(() => {
-        const token = sessionStorage.getItem('token');
-
-        return {
-            'Content-Type': 'application/json',
-            ...(token
-                ? { Authorization: `Bearer ${token}` }
-                : {})
-        };
-    }, []);
+   const getAuthHeaders = useCallback(() => {
+    return {
+        'Content-Type': 'application/json'
+    };
+}, []);
 
     // ==========================================
     // FETCH UNREAD MESSAGE COUNT
@@ -71,12 +66,14 @@ const Navbar = ({
 
         try {
             const res = await fetch(
-                `${API_URL}/api/messages/unread/${user.id}`,
-                {
-                    method: 'GET',
-                    headers: getAuthHeaders()
-                }
-            );
+    `${API_URL}/api/messages/unread/${user.id}`,
+    {
+        method: 'GET',
+        credentials: 'include',
+        cache: 'no-store',
+        headers: getAuthHeaders()
+    }
+);
 
             if (!res.ok) {
                 console.warn('Unread message API error:', res.status);
@@ -107,13 +104,15 @@ const Navbar = ({
         }
 
         try {
-            const res = await fetch(
-                `${API_URL}/api/notifications/unread/${user.id}`,
-                {
-                    method: 'GET',
-                    headers: getAuthHeaders()
-                }
-            );
+         const res = await fetch(
+    `${API_URL}/api/notifications/unread/${user.id}`,
+    {
+        method: 'GET',
+        credentials: 'include',
+        cache: 'no-store',
+        headers: getAuthHeaders()
+    }
+);
 
             if (!res.ok) {
                 console.warn(
@@ -149,13 +148,15 @@ const Navbar = ({
         setUsersLoading(true);
 
         try {
-            const res = await fetch(
-                `${API_URL}/api/users`,
-                {
-                    method: 'GET',
-                    headers: getAuthHeaders()
-                }
-            );
+     const res = await fetch(
+    `${API_URL}/api/users`,
+    {
+        method: 'GET',
+        credentials: 'include',
+        cache: 'no-store',
+        headers: getAuthHeaders()
+    }
+);
 
             if (!res.ok) {
                 console.warn('Users API error:', res.status);
@@ -207,32 +208,21 @@ const Navbar = ({
             return undefined;
         }
 
-        const token = sessionStorage.getItem('token');
-
-        if (!token) {
-            console.error(
-                'Socket connection cancelled: JWT token not found.'
-            );
-
-            setSocketInstance(null);
-            return undefined;
-        }
+    
 
         fetchUnreadCount();
         fetchNotificationUnreadCount();
         fetchAvailableUsers();
 
         // Create ONE authenticated Socket.IO connection.
-        const socket = io(API_URL, {
-            transports: ['polling'],
-            reconnection: true,
-            reconnectionAttempts: 5,
-            reconnectionDelay: 1000,
-            withCredentials: true,
-            auth: {
-                token
-            }
-        });
+        // Create ONE cookie-authenticated Socket.IO connection.
+const socket = io(API_URL, {
+    transports: ['polling'],
+    reconnection: true,
+    reconnectionAttempts: 5,
+    reconnectionDelay: 1000,
+    withCredentials: true
+});
 
         socketRef.current = socket;
         setSocketInstance(socket);

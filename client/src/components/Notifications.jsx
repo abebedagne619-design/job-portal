@@ -11,15 +11,11 @@ const Notifications = ({ user, onNotificationsUpdated }) => {
     const [readingId, setReadingId] = useState(null);
 
     const userId = user?.id || user?.user_id;
-
-    const getAuthHeaders = () => {
-        const token = sessionStorage.getItem('token');
-
-        return {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`
-        };
+const getAuthHeaders = () => {
+    return {
+        'Content-Type': 'application/json'
     };
+};
 
     const isRead = (value) => {
         return value === true || value === 1 || value === '1';
@@ -41,9 +37,11 @@ const Notifications = ({ user, onNotificationsUpdated }) => {
             const response = await fetch(
                 `${API_URL}/api/notifications/user/${userId}`,
                 {
-                    method: 'GET',
-                    headers: getAuthHeaders()
-                }
+    method: 'GET',
+    credentials: 'include',
+    cache: 'no-store',
+    headers: getAuthHeaders()
+}
             );
 
             if (response.status === 401) {
@@ -106,10 +104,12 @@ const Notifications = ({ user, onNotificationsUpdated }) => {
             const response = await fetch(
                 `${API_URL}/api/notifications/read/${id}`,
                 {
-                    method: 'PUT',
-                    headers: getAuthHeaders(),
-                    body: JSON.stringify({ category })
-                }
+    method: 'PUT',
+    credentials: 'include',
+    cache: 'no-store',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ category })
+}
             );
 
             const result = await response.json();

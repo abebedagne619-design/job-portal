@@ -15,56 +15,285 @@ const Recommendations = ({ user }) => {
     const [cvFile, setCvFile] = useState(null);
     const [uploadingCv, setUploadingCv] = useState(false);
 
+    // Use the authenticated backend user ID, not a possibly stale prop ID.
+    const [currentUserId, setCurrentUserId] = useState(null);
+
+    // =====================================
+    // INITIALIZE COMPONENT
+    // =====================================
     useEffect(() => {
-        if (user && user.id) {
-            fetchRecommendations();
-            fetchSkills();
-        } else {
-            setLoading(false);
-        }
-    }, [user]);
+        let active = true;
 
-    const fetchRecommendations = async () => {
-        if (!user || !user.id) return;
+        const initializeRecommendations = async () => {
+            try {
+                setLoading(true);
+                setRecommendations([]);
 
+                // 1. Verify the authenticated user from backend
+                const authResponse = await fetch(
+                    `${API_URL}/api/auth/me`,
+                    {
+                        method: 'GET',
+                        credentials: 'include',
+                        cache: 'no-store'
+                    }
+                );
+
+                if (!authResponse.ok) {
+                    throw new Error(
+                        `Authentication check failed: ${authResponse.status}`
+                    );
+                }
+
+                const authData = await authResponse.json();
+                const authenticatedUser = authData?.data;
+
+                if (
+                    !authData?.success ||
+                    !authenticatedUser?.id
+                ) {
+                    throw new Error('Authenticated user not found');
+                }
+
+                const verifiedUserId = authenticatedUser.id;
+
+                if (!active) return;
+
+                setCurrentUserId(verifiedUserId);
+
+                console.log(
+                    'Recommendations authenticated user ID:',
+                    verifiedUserId
+                );
+
+                // 2. Load skills belonging to authenticated user
+                const skillsResponse = await fetch(
+                    `${API_URL}/api/users/${verifiedUserId}/skills`,
+                    {
+                        method: 'GET',
+                        credentials: 'include',
+                        cache: 'no-store'
+                    }
+                );
+
+                if (!skillsResponse.ok) {
+                    const errorText = await skillsResponse.text();
+
+                    throw new Error(
+                        `Failed to fetch skills: ${skillsResponse.status} ${errorText}`
+                    );
+                }
+
+                const skillsData = await skillsResponse.json();
+
+                const loadedSkills = Array.isArray(skillsData)
+                    ? skillsData
+                    : [];
+
+                if (!active) return;
+
+                setSkills(loadedSkills.join(', '));
+
+                // 3. Fetch recommendations only after skills are loaded
+                await fetchRecommendations(
+                    loadedSkills,
+                    active
+                );
+
+            } catch (error) {
+                console.error(
+                    'Recommendations initialization error:',
+                    error
+                );
+
+                if (active) {
+                    setRecommendations([]);
+                }
+            } finally {
+                if (active) {
+                    setLoading(false);
+                }
+            }
+        };
+
+        initializeRecommendations();
+
+        return () => {
+            active = false;
+        };
+    }, [user?.id]);
+
+    // =====================================
+    // FETCH AI JOB RECOMMENDATIONS
+    // =====================================
+    const fetchRecommendations = async (
+        suppliedSkills = null,
+        active = true
+    ) => {
         try {
-            setLoading(true);
+            const skillsArray = Array.isArray(suppliedSkills)
+                ? suppliedSkills
+                : skills
+                    .split(',')
+                    .map(skill => skill.trim())
+                    .filter(Boolean);
 
-            const skillsArray = skills
-                ? skills.split(',').map(s => s.trim()).filter(s => s)
-                : [];
-
-            const res = await fetch(
+            const response = await fetch(
                 `${API_URL}/api/recommendations/skills`,
                 {
                     method: 'POST',
+                    credentials: 'include',
+                    cache: 'no-store',
                     headers: {
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({
-                        user_id: user.id,
                         skills: skillsArray
                     })
                 }
             );
 
-            if (!res.ok) {
-                throw new Error('Server error');
+            const responseText = await response.text();
+
+            if (!response.ok) {
+                console.error(
+                    'Recommendation API error:',
+                    response.status,
+                    responseText
+                );
+
+                throw new Error(
+                    `Recommendation API failed: ${response.status}`
+                );
             }
 
-            const data = await res.json();
-            setRecommendations(Array.isArray(data) ? data : []);
+            const data = responseText
+                ? JSON.parse(responseText)
+                : [];
 
-        } catch (err) {
-            console.error('Error fetching recommendations:', err);
-            setRecommendations([]);
-        } finally {
-            setLoading(false);
+            if (active) {
+                setRecommendations(
+                    Array.isArray(data) ? data : []
+                );
+            }
+
+        } catch (error) {
+            console.error(
+                'Error fetching recommendations:',
+                error
+            );
+
+            if (active) {
+                setRecommendations([]);
+            }
         }
     };
 
+    // =====================================
+    // SAVE USER SKILLS
+    // =====================================
+    const saveSkills = async () => {
+        if (!currentUserId) {
+            alert(
+                isAmharic
+                    ? 'የተጠቃሚ መለያ አልተረጋገጠም።'
+                    : 'User authentication not verified.'
+            );
+            return;
+        }
+
+        setSavingSkills(true);
+
+        const skillsArray = [
+            ...new Set(
+                skills
+                    .split(',')
+                    .map(skill => skill.trim())
+                    .filter(Boolean)
+            )
+        ];
+
+        try {
+            const response = await fetch(
+                `${API_URL}/api/users/me/skills`,
+                {
+                    method: 'PUT',
+                    credentials: 'include',
+                    cache: 'no-store',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        skills: skillsArray
+                    })
+                }
+            );
+
+            const responseText = await response.text();
+
+            let data = {};
+
+            try {
+                data = responseText
+                    ? JSON.parse(responseText)
+                    : {};
+            } catch {
+                data = {};
+            }
+
+            if (!response.ok) {
+                throw new Error(
+                    data.error || responseText || 'Failed to save skills'
+                );
+            }
+
+            setSkills(
+                Array.isArray(data.skills)
+                    ? data.skills.join(', ')
+                    : skillsArray.join(', ')
+            );
+
+            setEditingSkills(false);
+
+            await fetchRecommendations(
+                Array.isArray(data.skills)
+                    ? data.skills
+                    : skillsArray
+            );
+
+            alert(
+                isAmharic
+                    ? 'ክህሎቶችዎ በተሳካ ሁኔታ ተቀምጠዋል።'
+                    : 'Your skills have been saved successfully.'
+            );
+
+        } catch (error) {
+            console.error('Save skills error:', error);
+
+            alert(
+                isAmharic
+                    ? `ክህሎቶችን ማስቀመጥ አልተሳካም፦ ${error.message}`
+                    : `Failed to save skills: ${error.message}`
+            );
+        } finally {
+            setSavingSkills(false);
+        }
+    };
+
+    // =====================================
+    // UPLOAD CV
+    // =====================================
     const uploadCV = async () => {
-        if (!cvFile || !user?.id) {
+        if (!currentUserId) {
+            alert(
+                isAmharic
+                    ? 'የተጠቃሚ መለያ አልተረጋገጠም።'
+                    : 'User authentication not verified.'
+            );
+            return;
+        }
+
+        if (!cvFile) {
             alert(
                 isAmharic
                     ? 'እባክዎ PDF ፋይል ይምረጡ!'
@@ -73,7 +302,10 @@ const Recommendations = ({ user }) => {
             return;
         }
 
-        if (cvFile.type !== 'application/pdf') {
+        if (
+            cvFile.type !== 'application/pdf' &&
+            !cvFile.name.toLowerCase().endsWith('.pdf')
+        ) {
             alert(
                 isAmharic
                     ? 'እባክዎ PDF ፋይል ብቻ ይምረጡ!'
@@ -86,166 +318,115 @@ const Recommendations = ({ user }) => {
 
         const formData = new FormData();
         formData.append('cv', cvFile);
-        formData.append('userId', user.id);
+
+        // Backend must use authenticated session as the authority.
+        // This field is retained for compatibility with the existing API.
+        formData.append('userId', String(currentUserId));
 
         try {
-            const res = await fetch(
+            const response = await fetch(
                 `${API_URL}/api/recommendations/cv`,
                 {
                     method: 'POST',
+                    credentials: 'include',
+                    cache: 'no-store',
                     body: formData
                 }
             );
 
-            if (res.ok) {
-                const data = await res.json();
+            const responseText = await response.text();
 
-                setRecommendations(Array.isArray(data) ? data : []);
+            let data = {};
 
-                alert(
-                    isAmharic
-                        ? 'CV በተሳካ ሁኔታ ተጭኗል! አዲስ የሥራ ምክረ ሐሳቦች ተዘጋጅተዋል።'
-                        : 'CV uploaded successfully! New job recommendations are ready.'
-                );
-            } else {
-                const err = await res.json();
+            try {
+                data = responseText
+                    ? JSON.parse(responseText)
+                    : {};
+            } catch {
+                data = {};
+            }
 
-                alert(
-                    isAmharic
-                        ? `ስህተት፦ ${err.error || 'CV መጫን አልተሳካም'}`
-                        : `Error: ${err.error || 'CV upload failed'}`
+            if (!response.ok) {
+                throw new Error(
+                    data.error || `CV upload failed: ${response.status}`
                 );
             }
-        } catch (err) {
-            console.error('CV upload error:', err);
+
+            setRecommendations(
+                Array.isArray(data) ? data : []
+            );
 
             alert(
                 isAmharic
-                    ? 'CV መጫን አልተቻለም።'
-                    : 'Could not upload CV.'
+                    ? 'CV በተሳካ ሁኔታ ተጭኗል! አዲስ የሥራ ምክረ ሐሳቦች ተዘጋጅተዋል።'
+                    : 'CV uploaded successfully! New job recommendations are ready.'
+            );
+
+        } catch (error) {
+            console.error('CV upload error:', error);
+
+            alert(
+                isAmharic
+                    ? `CV መጫን አልተቻለም፦ ${error.message}`
+                    : `Could not upload CV: ${error.message}`
             );
         } finally {
             setUploadingCv(false);
         }
     };
 
-    const fetchSkills = async () => {
-        if (!user || !user.id) return;
-
-        try {
-            const token = sessionStorage.getItem('token');
-
-            const res = await fetch(
-                `${API_URL}/api/users/${user.id}/skills`,
-                {
-                    headers: {
-                        Authorization: `Bearer ${token}`
-                    }
-                }
-            );
-
-            if (!res.ok) {
-                throw new Error('Failed to fetch skills');
-            }
-
-            const data = await res.json();
-
-            if (Array.isArray(data)) {
-                setSkills(data.join(', '));
-            }
-        } catch (err) {
-            console.error('Error fetching skills:', err);
-        }
-    };
-
-    const saveSkills = async () => {
-        if (!user || !user.id) return;
-
-        setSavingSkills(true);
-
-        const skillsArray = skills
-            .split(',')
-            .map(s => s.trim())
-            .filter(s => s);
-
-        try {
-            const res = await fetch(
-                `${API_URL}/api/recommendations/skills`,
-                {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        user_id: user.id,
-                        skills: skillsArray
-                    })
-                }
-            );
-
-            if (res.ok) {
-                setEditingSkills(false);
-                await fetchRecommendations();
-
-                alert(
-                    isAmharic
-                        ? 'ክህሎቶችዎ በተሳካ ሁኔታ ተቀምጠዋል።'
-                        : 'Your skills have been saved successfully.'
-                );
-            } else {
-                alert(
-                    isAmharic
-                        ? 'ክህሎቶችን ማስቀመጥ አልተሳካም።'
-                        : 'Failed to save skills.'
-                );
-            }
-        } catch (err) {
-            console.error('Error saving skills:', err);
-
-            alert(
-                isAmharic
-                    ? 'ክህሎቶችን ማስቀመጥ አልተቻለም።'
-                    : 'Could not save skills.'
-            );
-        } finally {
-            setSavingSkills(false);
-        }
-    };
-
+    // =====================================
+    // SEND RECOMMENDATION FEEDBACK
+    // =====================================
     const sendFeedback = async (jobId, feedback) => {
-        if (!user || !user.id) return;
+        if (!currentUserId) return;
 
         try {
-            const res = await fetch(
-                `${API_URL}/api/recommendations/skills`,
+            const response = await fetch(
+                `${API_URL}/api/recommendations/feedback`,
                 {
                     method: 'POST',
+                    credentials: 'include',
+                    cache: 'no-store',
                     headers: {
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({
-                        user_id: user.id,
                         job_id: jobId,
-                        feedback: feedback
+                        feedback
                     })
                 }
             );
 
-            if (!res.ok) {
-                throw new Error('Feedback request failed');
+            const responseText = await response.text();
+
+            if (!response.ok) {
+                console.error(
+                    'Feedback API error:',
+                    responseText
+                );
+
+                throw new Error(
+                    `Feedback request failed: ${response.status}`
+                );
             }
 
             alert(
                 feedback === 'like'
-                    ? (isAmharic
-                        ? 'ወደዱት! 👍 AI ምርጫዎን ይማራል።'
-                        : 'Liked! 👍 AI will learn from this.')
-                    : (isAmharic
-                        ? 'አልወደዱትም! 👎 AI ምርጫዎን ይማራል።'
-                        : 'Disliked! 👎 AI will learn from this.')
+                    ? (
+                        isAmharic
+                            ? 'ወደዱት! 👍 አስተያየትዎ ተቀምጧል።'
+                            : 'Liked! 👍 Your feedback has been saved.'
+                    )
+                    : (
+                        isAmharic
+                            ? 'አልወደዱትም! 👎 አስተያየትዎ ተቀምጧል።'
+                            : 'Disliked! 👎 Your feedback has been saved.'
+                    )
             );
-        } catch (err) {
-            console.error('Feedback error:', err);
+
+        } catch (error) {
+            console.error('Feedback error:', error);
 
             alert(
                 isAmharic
@@ -255,17 +436,22 @@ const Recommendations = ({ user }) => {
         }
     };
 
+    // =====================================
+    // STYLES
+    // =====================================
     const styles = {
         container: {
             padding: '2rem 5%',
             color: '#fff'
         },
+
         title: {
             fontSize: '2rem',
             marginBottom: '1rem',
             color: '#2ecc71',
             textAlign: 'center'
         },
+
         skillsSection: {
             background: 'rgba(30,60,30,0.8)',
             padding: '1.5rem',
@@ -273,6 +459,7 @@ const Recommendations = ({ user }) => {
             marginBottom: '2rem',
             textAlign: 'center'
         },
+
         editBtn: {
             padding: '0.6rem 1.5rem',
             background: '#2ecc71',
@@ -283,11 +470,13 @@ const Recommendations = ({ user }) => {
             marginTop: '15px',
             fontWeight: 'bold'
         },
+
         grid: {
             display: 'grid',
             gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
             gap: '2rem'
         },
+
         card: {
             background: 'rgba(20,40,20,0.9)',
             padding: '1.5rem',
@@ -295,6 +484,7 @@ const Recommendations = ({ user }) => {
             border: '1px solid #2ecc71',
             position: 'relative'
         },
+
         feedbackContainer: {
             display: 'flex',
             gap: '15px',
@@ -302,6 +492,7 @@ const Recommendations = ({ user }) => {
             borderTop: '1px solid #333',
             paddingTop: '10px'
         },
+
         likeBtn: {
             background: '#2ecc71',
             border: 'none',
@@ -311,6 +502,7 @@ const Recommendations = ({ user }) => {
             cursor: 'pointer',
             flex: 1
         },
+
         dislikeBtn: {
             background: '#e74c3c',
             border: 'none',
@@ -320,6 +512,7 @@ const Recommendations = ({ user }) => {
             cursor: 'pointer',
             flex: 1
         },
+
         matchBadge: {
             position: 'absolute',
             top: '10px',
@@ -331,6 +524,9 @@ const Recommendations = ({ user }) => {
         }
     };
 
+    // =====================================
+    // USER CHECK
+    // =====================================
     if (!user) {
         return (
             <div style={{
@@ -338,11 +534,16 @@ const Recommendations = ({ user }) => {
                 padding: '5rem',
                 color: '#2ecc71'
             }}>
-                {isAmharic ? 'ተጠቃሚው አልተገኘም።' : 'User not found.'}
+                {isAmharic
+                    ? 'ተጠቃሚው አልተገኘም።'
+                    : 'User not found.'}
             </div>
         );
     }
 
+    // =====================================
+    // LOADING
+    // =====================================
     if (loading) {
         return (
             <div style={{
@@ -357,6 +558,9 @@ const Recommendations = ({ user }) => {
         );
     }
 
+    // =====================================
+    // MAIN UI
+    // =====================================
     return (
         <div style={styles.container}>
             <h1 style={styles.title}>
@@ -367,7 +571,9 @@ const Recommendations = ({ user }) => {
 
             <div style={styles.skillsSection}>
                 <h3>
-                    {isAmharic ? 'የእርስዎ ክህሎቶች' : 'Your Skills'}
+                    {isAmharic
+                        ? 'የእርስዎ ክህሎቶች'
+                        : 'Your Skills'}
                 </h3>
 
                 {editingSkills ? (
@@ -382,7 +588,9 @@ const Recommendations = ({ user }) => {
                             minHeight: '100px'
                         }}
                         value={skills}
-                        onChange={(e) => setSkills(e.target.value)}
+                        onChange={(event) =>
+                            setSkills(event.target.value)
+                        }
                         placeholder={
                             isAmharic
                                 ? 'ለምሳሌ፦ React, Node.js, Python'
@@ -394,15 +602,18 @@ const Recommendations = ({ user }) => {
                         fontSize: '1.2rem',
                         color: '#2ecc71'
                     }}>
-                        {skills || (isAmharic
-                            ? 'ምንም ክህሎት አልተመዘገበም ✨'
-                            : 'No skills added yet ✨')}
+                        {skills || (
+                            isAmharic
+                                ? 'ምንም ክህሎት አልተመዘገበም ✨'
+                                : 'No skills added yet ✨'
+                        )}
                     </p>
                 )}
 
                 <br />
 
                 <button
+                    type="button"
                     style={styles.editBtn}
                     onClick={
                         editingSkills
@@ -412,10 +623,22 @@ const Recommendations = ({ user }) => {
                     disabled={savingSkills}
                 >
                     {savingSkills
-                        ? (isAmharic ? 'በማስቀመጥ ላይ...' : 'Saving...')
+                        ? (
+                            isAmharic
+                                ? 'በማስቀመጥ ላይ...'
+                                : 'Saving...'
+                        )
                         : editingSkills
-                            ? (isAmharic ? 'ክህሎቶችን አስቀምጥ' : 'Save Skills')
-                            : (isAmharic ? 'ክህሎቶችን አስተካክል' : 'Edit Skills')}
+                            ? (
+                                isAmharic
+                                    ? 'ክህሎቶችን አስቀምጥ'
+                                    : 'Save Skills'
+                            )
+                            : (
+                                isAmharic
+                                    ? 'ክህሎቶችን አስተካክል'
+                                    : 'Edit Skills'
+                            )}
                 </button>
 
                 <div style={{
@@ -427,14 +650,18 @@ const Recommendations = ({ user }) => {
                         color: '#2ecc71',
                         marginBottom: '10px'
                     }}>
-                        {isAmharic ? 'ወይም CV (PDF) ይጫኑ' : 'Or Upload CV (PDF)'}
+                        {isAmharic
+                            ? 'ወይም CV (PDF) ይጫኑ'
+                            : 'Or Upload CV (PDF)'}
                     </h4>
 
                     <input
                         type="file"
                         accept=".pdf,application/pdf"
-                        onChange={(e) =>
-                            setCvFile(e.target.files?.[0] || null)
+                        onChange={(event) =>
+                            setCvFile(
+                                event.target.files?.[0] || null
+                            )
                         }
                         style={{
                             display: 'block',
@@ -444,18 +671,27 @@ const Recommendations = ({ user }) => {
                     />
 
                     <button
+                        type="button"
                         onClick={uploadCV}
                         disabled={uploadingCv || !cvFile}
                         style={{
                             ...styles.editBtn,
-                            background: uploadingCv ? '#555' : '#3498db'
+                            background: uploadingCv
+                                ? '#555'
+                                : '#3498db'
                         }}
                     >
                         {uploadingCv
-                            ? (isAmharic ? 'በመጫን ላይ...' : 'Uploading...')
-                            : (isAmharic
-                                ? '📄 CV አስገባና አስመስል'
-                                : '📄 Upload CV & Analyze')}
+                            ? (
+                                isAmharic
+                                    ? 'በመጫን ላይ...'
+                                    : 'Uploading...'
+                            )
+                            : (
+                                isAmharic
+                                    ? '📄 CV አስገባና አስመስል'
+                                    : '📄 Upload CV & Analyze'
+                            )}
                     </button>
                 </div>
             </div>
@@ -463,11 +699,17 @@ const Recommendations = ({ user }) => {
             <div style={styles.grid}>
                 {recommendations.length > 0 ? (
                     recommendations.map(job => (
-                        <div key={job.id} style={styles.card}>
+                        <div
+                            key={job.id}
+                            style={styles.card}
+                        >
                             {job.similarity_score !== undefined && (
                                 <span style={styles.matchBadge}>
-                                    {(job.similarity_score * 100).toFixed(0)}%{' '}
-                                    {isAmharic ? 'ተስማሚነት' : 'Match'}
+                                    {(job.similarity_score * 100).toFixed(0)}%
+                                    {' '}
+                                    {isAmharic
+                                        ? 'ተስማሚነት'
+                                        : 'Match'}
                                 </span>
                             )}
 
@@ -498,17 +740,27 @@ const Recommendations = ({ user }) => {
 
                             <div style={styles.feedbackContainer}>
                                 <button
+                                    type="button"
                                     style={styles.likeBtn}
-                                    onClick={() => sendFeedback(job.id, 'like')}
+                                    onClick={() =>
+                                        sendFeedback(job.id, 'like')
+                                    }
                                 >
-                                    👍 {isAmharic ? 'ወድጄዋለሁ' : 'Like'}
+                                    👍 {isAmharic
+                                        ? 'ወድጄዋለሁ'
+                                        : 'Like'}
                                 </button>
 
                                 <button
+                                    type="button"
                                     style={styles.dislikeBtn}
-                                    onClick={() => sendFeedback(job.id, 'dislike')}
+                                    onClick={() =>
+                                        sendFeedback(job.id, 'dislike')
+                                    }
                                 >
-                                    👎 {isAmharic ? 'አልወደድኩትም' : 'Dislike'}
+                                    👎 {isAmharic
+                                        ? 'አልወደድኩትም'
+                                        : 'Dislike'}
                                 </button>
                             </div>
                         </div>

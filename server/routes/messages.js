@@ -21,38 +21,32 @@ const pool = mysql.createPool({
 
 const promisePool = pool.promise();
 
-const JWT_SECRET =
-    process.env.JWT_SECRET || 'jobportal_secret_key_2024';
 
 // ==========================================
 // AUTHENTICATION MIDDLEWARE
 // ==========================================
 
+
 const authenticateUser = async (req, res, next) => {
     try {
-        const authHeader = req.headers.authorization;
-
-        if (!authHeader || !authHeader.startsWith('Bearer ')) {
-            return res.status(401).json({
-                success: false,
-                message: 'Authentication token is required.'
-            });
-        }
-
-        const token = authHeader.substring(7).trim();
+        const token = req.cookies?.token;
 
         if (!token) {
             return res.status(401).json({
                 success: false,
-                message: 'Authentication token is missing.'
+                message: 'Authentication cookie is required.'
             });
         }
 
-        const decoded = jwt.verify(token, JWT_SECRET);
+        const secret = process.env.JWT_SECRET;
 
-        const userId = decoded?.id || decoded?.userId;
+        if (!secret) {
+            throw new Error('JWT_SECRET is not configured');
+        }
 
-        if (!userId) {
+        const decoded = jwt.verify(token, secret);
+
+        if (!decoded?.id) {
             return res.status(401).json({
                 success: false,
                 message: 'Invalid authentication token.'
@@ -64,7 +58,7 @@ const authenticateUser = async (req, res, next) => {
              FROM users
              WHERE id = ?
              LIMIT 1`,
-            [userId]
+            [decoded.id]
         );
 
         if (!users.length) {
@@ -75,7 +69,6 @@ const authenticateUser = async (req, res, next) => {
         }
 
         req.user = users[0];
-
         next();
 
     } catch (error) {
@@ -86,10 +79,11 @@ const authenticateUser = async (req, res, next) => {
 
         return res.status(401).json({
             success: false,
-            message: 'Invalid or expired token.'
+            message: 'Invalid or expired authentication cookie.'
         });
     }
 };
+
 
 // All message routes require authentication.
 router.use(authenticateUser);

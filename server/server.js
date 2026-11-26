@@ -3,6 +3,8 @@ require("dotenv").config();
 const express = require("express");
 const compression = require("compression");
 const cors = require("cors");
+const cookieParser = require("cookie-parser");
+const cookie = require("cookie");
 const mysql = require("mysql2");
 const path = require("path");
 const fs = require("fs");
@@ -24,6 +26,33 @@ const { PDFParse } = require("pdf-parse");
 const app = express();
 app.set('trust proxy', 1);
 const PORT = process.env.PORT || 5000;
+
+// ============= AUTH COOKIE CONFIGURATION =============
+
+const isProduction = process.env.NODE_ENV === "production";
+
+const AUTH_COOKIE_NAME = "token";
+
+const authCookieOptions = {
+  httpOnly: true,
+  secure: isProduction,
+  sameSite: isProduction ? "none" : "lax",
+  maxAge: 30 * 24 * 60 * 60 * 1000,
+  path: "/",
+};
+
+function setAuthCookie(res, token) {
+  res.cookie(AUTH_COOKIE_NAME, token, authCookieOptions);
+}
+
+function clearAuthCookie(res) {
+  res.clearCookie(AUTH_COOKIE_NAME, {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction ? "none" : "lax",
+    path: "/",
+  });
+}
 
 // ============= 1. ERROR HANDLING =============
 
@@ -56,20 +85,54 @@ app.use(
   }),
 );
 
+// ============= CSRF PROTECTION: ORIGIN VALIDATION =============
+
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+app.use((req, res, next) => {
+  // Safe HTTP methods do not change server data.
+  if (SAFE_METHODS.has(req.method)) {
+    return next();
+  }
+
+  const requestOrigin = req.get("Origin");
+
+  // Reject requests without a valid trusted origin.
+  if (!requestOrigin || !allowedOrigins.includes(requestOrigin)) {
+    console.warn(
+      `CSRF Protection: Blocked ${req.method} request from ${requestOrigin || "unknown origin"}`
+    );
+
+    return res.status(403).json({
+      success: false,
+      message: "Request origin is not allowed",
+    });
+  }
+
+  next();
+});
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
 
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // Session & Passport
 
+if (!process.env.SESSION_SECRET) {
+  throw new Error("SESSION_SECRET is not configured");
+}
+
 app.use(
   session({
-    secret: process.env.SESSION_SECRET || "jobportal_secret_key",
+    secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     cookie: {
-      secure: false,
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: isProduction ? "none" : "lax",
       maxAge: 24 * 60 * 60 * 1000,
     },
   }),
@@ -165,10 +228,20 @@ checkConnection();
 
 // ============= HELPER FUNCTIONS =============
 
+const getJwtSecret = () => {
+  const secret = process.env.JWT_SECRET;
+
+  if (!secret) {
+    throw new Error("JWT_SECRET is not configured");
+  }
+
+  return secret;
+};
+
 const generateToken = (id) => {
   return jwt.sign(
     { id },
-    process.env.JWT_SECRET || "jobportal_secret_key_2024",
+    getJwtSecret(),
     {
       expiresIn: "30d",
     },
@@ -178,22 +251,13 @@ const generateToken = (id) => {
 // ============= AUTHENTICATION HELPER =============
 
 function verifyAuthToken(req) {
-  const authHeader = req.headers.authorization;
-
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    throw new Error("Unauthorized");
-  }
-
-  const token = authHeader.split(" ")[1];
+  const token = req.cookies?.[AUTH_COOKIE_NAME];
 
   if (!token) {
     throw new Error("Unauthorized");
   }
 
-  return jwt.verify(
-    token,
-    process.env.JWT_SECRET || "jobportal_secret_key_2024",
-  );
+  return jwt.verify(token, getJwtSecret());
 }
 
 // Get authenticated user
@@ -418,26 +482,41 @@ app.get("/api/notifications/push-status", (req, res) => {
   });
 });
 
-// ============= RECOMMENDATIONS API =============
+/// ============= RECOMMENDATIONS API =============
 
 app.post("/api/recommendations/skills", async (req, res) => {
   try {
-    const { user_id, skills } = req.body;
+    const user = await getAuthenticatedUser(req);
+    const { skills } = req.body;
 
-    console.log(`📡 Processing recommendations for User: ${user_id}`);
+    if (!Array.isArray(skills)) {
+      return res.status(400).json({
+        success: false,
+        error: "Skills must be an array",
+      });
+    }
 
-    const response = await axios.post("http://localhost:5001/recommend", {
-      userId: user_id,
-      skills: skills,
-    });
+    console.log(`📡 Processing recommendations for User: ${user.id}`);
+
+    const response = await axios.post(
+      "http://localhost:5001/recommend",
+      {
+        userId: user.id,
+        skills,
+      },
+      { timeout: 60000 },
+    );
 
     res.json(response.data);
   } catch (error) {
-    console.error("❌ ML Service Error:", error.message);
+    console.error("Recommendations Error:", error.message);
 
-    res.status(500).json({
-      error: "የማሽን ለርኒንግ አገልግሎቱ (Python) ምላሽ አልሰጠም",
-      details: error.message,
+    res.status(error.message === "Unauthorized" ? 401 : 500).json({
+      success: false,
+      error:
+        error.message === "Unauthorized"
+          ? "Unauthorized"
+          : "Recommendation service unavailable",
     });
   }
 });
@@ -446,64 +525,56 @@ app.post("/api/recommendations/skills", async (req, res) => {
 
 app.get("/api/recommendations/skills/:userId", async (req, res) => {
   try {
-    const userId = req.params.userId;
-    const cacheKey = `rec_${userId}`;
+    const user = await getAuthenticatedUser(req);
+    const userId = Number(req.params.userId);
 
+    if (!Number.isInteger(userId) || userId !== Number(user.id)) {
+      return res.status(403).json({
+        success: false,
+        error: "Forbidden",
+      });
+    }
+
+    const cacheKey = `rec_${user.id}`;
     const cached = getCache(cacheKey);
 
     if (cached) {
-      console.log(`⚡ Cache HIT for user ${userId}`);
-
       return res.json(cached);
     }
 
-    console.log(`🔄 Cache MISS for user ${userId} - fetching from ML`);
+    const [skillRows] = await promisePool.query(
+      "SELECT DISTINCT skill FROM user_skills WHERE user_id = ?",
+      [user.id],
+    );
 
-    let skills = [];
-
-    try {
-      const [skillRows] = await promisePool.query(
-        "SELECT DISTINCT skill FROM user_skills WHERE user_id = ?",
-        [userId],
-      );
-
-      skills = skillRows.map((row) => row.skill);
-    } catch (skillErr) {
-      console.log("⚠️ user_skills table not found, using empty skills");
-    }
-
-    console.log(`📡 GET Recommendations - User: ${userId}, Skills:`, skills);
+    const skills = skillRows.map((row) => row.skill);
 
     const response = await axios.post(
       "http://localhost:5001/recommend",
       {
-        userId: parseInt(userId),
-        skills: skills,
+        userId: user.id,
+        skills,
       },
-      {
-        timeout: 60000,
-      },
+      { timeout: 60000 },
     );
 
     setCache(cacheKey, response.data);
 
-    console.log(
-      `✅ Cached ${response.data.length} recommendations for user ${userId}`,
-    );
-
     res.json(response.data);
   } catch (error) {
-    console.error("❌ ML Service Error:", error.message);
+    console.error("GET Recommendations Error:", error.message);
 
-    res.status(500).json({
-      error: "ML service unavailable",
-      details: error.message,
+    res.status(error.message === "Unauthorized" ? 401 : 500).json({
+      success: false,
+      error:
+        error.message === "Unauthorized"
+          ? "Unauthorized"
+          : "ML service unavailable",
     });
   }
 });
 
 // ============= RECOMMENDATIONS BY CV UPLOAD =============
-
 const upload = multer({
   storage: multer.memoryStorage(),
 });
@@ -512,37 +583,54 @@ app.post("/api/recommendations/cv", upload.single("cv"), async (req, res) => {
   let parser;
 
   try {
+    // Verify logged-in user using authentication cookie
+    const user = await getAuthenticatedUser(req);
+    const userId = user.id;
+
+    // Check uploaded file
     if (!req.file) {
       return res.status(400).json({
+        success: false,
         error: "No CV file uploaded",
       });
     }
 
-    const userId = req.body.userId;
+    // Validate PDF file
+    if (
+      req.file.mimetype !== "application/pdf" ||
+      !req.file.originalname.toLowerCase().endsWith(".pdf")
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: "Only PDF files are allowed",
+      });
+    }
 
     console.log(`📄 Received CV from User: ${userId}`);
 
+    // Extract text from PDF
     parser = new PDFParse({
       data: req.file.buffer,
     });
 
     const pdfData = await parser.getText();
-
     const cvText = pdfData.text;
 
     await parser.destroy();
     parser = null;
 
-    if (!cvText) {
+    if (!cvText || !cvText.trim()) {
       return res.status(400).json({
+        success: false,
         error: "Could not extract text from PDF",
       });
     }
 
+    // Send CV text to Python ML service
     const response = await axios.post(
       "http://localhost:5001/recommend-cv",
       {
-        userId: parseInt(userId),
+        userId: userId,
         cvText: cvText,
       },
       {
@@ -550,21 +638,37 @@ app.post("/api/recommendations/cv", upload.single("cv"), async (req, res) => {
       },
     );
 
+    // Return recommendations
     res.json(response.data);
+
   } catch (error) {
     if (parser) {
       try {
         await parser.destroy();
-      } catch (e) {
-        console.error("PDF parser cleanup error:", e.message);
+      } catch (cleanupError) {
+        console.error("PDF parser cleanup error:", cleanupError.message);
       }
     }
 
     console.error("❌ CV Processing Error:", error.message);
 
+    if (error.message === "Unauthorized") {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized. Please login first.",
+      });
+    }
+
+    if (error.response) {
+      return res.status(502).json({
+        success: false,
+        error: "Recommendation service failed",
+      });
+    }
+
     res.status(500).json({
+      success: false,
       error: "Failed to process CV",
-      details: error.message,
     });
   }
 });
@@ -573,21 +677,30 @@ app.post("/api/recommendations/cv", upload.single("cv"), async (req, res) => {
 
 app.post("/api/recommendations/clear-cache/:userId", async (req, res) => {
   try {
-    const userId = req.params.userId;
+    const user = await getAuthenticatedUser(req);
+    const userId = Number(req.params.userId);
 
-    clearCache(`rec_${userId}`);
+    if (!Number.isInteger(userId) || userId !== Number(user.id)) {
+      return res.status(403).json({
+        success: false,
+        error: "Forbidden",
+      });
+    }
 
-    console.log(`🗑️ Cache cleared for user ${userId}`);
+    clearCache(`rec_${user.id}`);
 
-    res.json({
+    console.log(`🗑️ Cache cleared for user ${user.id}`);
+
+    return res.json({
       success: true,
-      message: `Cache cleared for user ${userId}`,
+      message: "Recommendations cache cleared successfully",
     });
-  } catch (err) {
-    console.error("Clear cache error:", err);
+  } catch (error) {
+    console.error("Clear cache error:", error.message);
 
-    res.status(500).json({
-      error: err.message,
+    return res.status(error.message === "Unauthorized" ? 401 : 500).json({
+      success: false,
+      error: error.message === "Unauthorized" ? "Unauthorized" : "Cache clearing failed",
     });
   }
 });
@@ -644,15 +757,16 @@ app.post("/api/auth/register", async (req, res) => {
       [result.insertId],
     );
 
-    const token = generateToken(result.insertId);
+ const token = generateToken(result.insertId);
 
-    res.status(201).json({
-      success: true,
-      data: {
-        user: users[0],
-        token,
-      },
-    });
+setAuthCookie(res, token);
+
+res.status(201).json({
+  success: true,
+  data: {
+    user: users[0],
+  },
+});
   } catch (err) {
     console.error("Register error:", err);
 
@@ -690,17 +804,18 @@ app.post("/api/auth/login", async (req, res) => {
       });
     }
 
-    const token = generateToken(user.id);
+  const token = generateToken(user.id);
 
-    const { password: _, ...userWithoutPassword } = user;
+setAuthCookie(res, token);
 
-    res.json({
-      success: true,
-      data: {
-        user: userWithoutPassword,
-        token,
-      },
-    });
+const { password: _, ...userWithoutPassword } = user;
+
+res.json({
+  success: true,
+  data: {
+    user: userWithoutPassword,
+  },
+});
   } catch (err) {
     console.error("Login error:", err);
 
@@ -711,28 +826,31 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
+
+// ==========================================
+// LOGOUT ROUTE
+// ==========================================
+
+app.post("/api/auth/logout", (req, res) => {
+  clearAuthCookie(res);
+
+  return res.json({
+    success: true,
+    message: "Logged out successfully",
+  });
+});
+
+
 app.get("/api/auth/me", async (req, res) => {
-  const token = req.headers.authorization?.split(" ")[1];
-
-  if (!token) {
-    return res.status(401).json({
-      success: false,
-      message: "No token provided",
-    });
-  }
-
   try {
-    const decoded = jwt.verify(
-      token,
-      process.env.JWT_SECRET || "jobportal_secret_key_2024",
-    );
+    const decoded = verifyAuthToken(req);
 
     const [users] = await promisePool.query(
       `
-            SELECT id, name, email, role, phone, location
-            FROM users
-            WHERE id = ?
-            `,
+        SELECT id, name, email, role, phone, location
+        FROM users
+        WHERE id = ?
+      `,
       [decoded.id],
     );
 
@@ -743,59 +861,17 @@ app.get("/api/auth/me", async (req, res) => {
       });
     }
 
-    res.json({
+    return res.json({
       success: true,
       data: users[0],
     });
   } catch (err) {
-    res.status(401).json({
+    return res.status(401).json({
       success: false,
-      message: "Invalid token",
+      message: "Invalid or missing authentication",
     });
   }
 });
-
-// ============= JOBS API =============
-
-app.get("/api/jobs", async (req, res) => {
-  try {
-    const { search } = req.query;
-
-    let query = `
-            SELECT j.*, u.name as employer_name
-            FROM jobs j
-            JOIN users u ON j.employer_id = u.id
-            WHERE 1=1
-        `;
-
-    let params = [];
-
-    if (search) {
-      query += `
-                AND (
-                    j.title LIKE ?
-                    OR j.description LIKE ?
-                    OR j.company LIKE ?
-                )
-            `;
-
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
-    }
-
-    query += " ORDER BY j.created_at DESC";
-
-    const [jobs] = await promisePool.query(query, params);
-
-    res.json(jobs);
-  } catch (err) {
-    console.error("Get jobs error:", err);
-
-    res.status(500).json({
-      error: err.message,
-    });
-  }
-});
-
 // ============= ADVANCED SEARCH =============
 
 app.get("/api/jobs/search", async (req, res) => {
@@ -872,6 +948,56 @@ app.get("/api/jobs/search", async (req, res) => {
   } catch (err) {
     res.status(500).json({
       error: err.message,
+    });
+  }
+});
+
+
+// ============= GET ALL JOBS =============
+
+app.get("/api/jobs", async (req, res) => {
+  const { search } = req.query;
+
+  try {
+    let query = `
+      SELECT
+        j.*,
+        IFNULL(ROUND(AVG(r.rating), 1), 0) AS rating
+      FROM jobs j
+      LEFT JOIN job_ratings r ON j.id = r.job_id
+      WHERE 1=1
+    `;
+
+    const params = [];
+
+    if (search) {
+      query += `
+        AND (
+          j.title LIKE ?
+          OR j.company LIKE ?
+          OR j.location LIKE ?
+        )
+      `;
+
+      params.push(
+        `%${search}%`,
+        `%${search}%`,
+        `%${search}%`
+      );
+    }
+
+    query += " GROUP BY j.id ORDER BY j.created_at DESC";
+
+    const [jobs] = await promisePool.query(query, params);
+
+    res.json(jobs);
+
+  } catch (err) {
+    console.error("Get all jobs error:", err);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch jobs"
     });
   }
 });
@@ -1294,6 +1420,170 @@ app.get("/api/users/:userId/skills", async (req, res) => {
     });
   }
 });
+
+
+// ============= SAVE USER SKILLS API =============
+
+app.put("/api/users/me/skills", async (req, res) => {
+  let connection;
+
+  try {
+    // Get authenticated user from secure cookie
+    const user = await getAuthenticatedUser(req);
+
+    const { skills } = req.body;
+
+    if (!Array.isArray(skills)) {
+      return res.status(400).json({
+        success: false,
+        message: "Skills must be an array",
+      });
+    }
+
+    if (skills.length > 50) {
+      return res.status(400).json({
+        success: false,
+        message: "Maximum 50 skills are allowed",
+      });
+    }
+
+    // Normalize and remove duplicate skills
+    const normalizedSkills = [
+      ...new Set(
+        skills
+          .filter((skill) => typeof skill === "string")
+          .map((skill) => skill.trim().toLowerCase())
+          .filter((skill) => skill.length > 0 && skill.length <= 100)
+      ),
+    ];
+
+    connection = await promisePool.getConnection();
+
+    await connection.beginTransaction();
+
+    // Delete the user's previous skills
+    await connection.query(
+      "DELETE FROM user_skills WHERE user_id = ?",
+      [user.id]
+    );
+
+    // Insert the updated skills
+    if (normalizedSkills.length > 0) {
+      const values = normalizedSkills.map((skill) => [
+        user.id,
+        skill,
+      ]);
+
+      await connection.query(
+        "INSERT INTO user_skills (user_id, skill) VALUES ?",
+        [values]
+      );
+    }
+
+    await connection.commit();
+
+    return res.json({
+      success: true,
+      message: "Skills saved successfully",
+      skills: normalizedSkills,
+    });
+
+  } catch (error) {
+    if (connection) {
+      await connection.rollback();
+    }
+
+    console.error("Save skills error:", error.message);
+
+    const status =
+      error.message === "Unauthorized" ||
+      error.message === "User not found"
+        ? 401
+        : 500;
+
+    return res.status(status).json({
+      success: false,
+      message:
+        status === 401
+          ? "Unauthorized"
+          : "Failed to save skills",
+    });
+
+  } finally {
+    if (connection) {
+      connection.release();
+    }
+  }
+});
+
+
+// ============= RECOMMENDATION FEEDBACK API =============
+
+app.post("/api/recommendations/feedback", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+
+    const jobId = Number(req.body.job_id);
+    const { feedback } = req.body;
+
+    if (!Number.isInteger(jobId) || jobId <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid job ID",
+      });
+    }
+
+    if (!["like", "dislike"].includes(feedback)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid feedback value",
+      });
+    }
+
+    const [jobs] = await promisePool.query(
+      "SELECT id FROM jobs WHERE id = ?",
+      [jobId]
+    );
+
+    if (jobs.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Job not found",
+      });
+    }
+
+    await promisePool.query(
+  `INSERT INTO recommendation_feedback
+   (user_id, job_id, feedback)
+   VALUES (?, ?, ?)
+   ON DUPLICATE KEY UPDATE
+   feedback = VALUES(feedback),
+   created_at = CURRENT_TIMESTAMP`,
+  [user.id, jobId, feedback]
+);
+    return res.json({
+      success: true,
+      message: "Feedback saved successfully",
+    });
+
+  } catch (error) {
+    console.error("Recommendation feedback error:", error.message);
+
+    const status =
+      error.message === "Unauthorized" ||
+      error.message === "User not found"
+        ? 401
+        : 500;
+
+    return res.status(status).json({
+      success: false,
+      message: status === 401
+        ? "Unauthorized"
+        : "Failed to save feedback",
+    });
+  }
+});
+
 
 // ============= INTERVIEWS API =============
 
@@ -2426,19 +2716,26 @@ app.get("/api/applications", async (req, res) => {
 
 app.get("/api/analytics/jobs-by-type", async (req, res) => {
   try {
+    const user = await requireAdmin(req);
+
     const [rows] = await promisePool.query(
       `
-            SELECT type, COUNT(*) as count
-            FROM jobs
-            GROUP BY type
-            `,
+        SELECT type, COUNT(*) as count
+        FROM jobs
+        GROUP BY type
+      `
     );
 
     res.json(rows);
   } catch (err) {
     console.error(err);
 
-    res.status(500).json({
+    const status =
+      err.message === "Unauthorized" ? 401 :
+      err.message === "Forbidden" ? 403 : 500;
+
+    res.status(status).json({
+      success: false,
       error: err.message,
     });
   }
@@ -2446,20 +2743,36 @@ app.get("/api/analytics/jobs-by-type", async (req, res) => {
 
 app.get("/api/analytics/popular-jobs", async (req, res) => {
   try {
+    await requireAdmin(req);
+
     const [rows] = await promisePool.query(`
-            SELECT
-                title,
-                views_count as count
-            FROM jobs
-            ORDER BY views_count DESC
-            LIMIT 5
-        `);
+      SELECT
+        j.id,
+        j.title,
+        j.company,
+        j.views_count AS count,
+        COUNT(a.id) AS applications
+      FROM jobs j
+      LEFT JOIN applications a ON a.job_id = j.id
+      GROUP BY
+        j.id,
+        j.title,
+        j.company,
+        j.views_count
+      ORDER BY j.views_count DESC
+      LIMIT 5
+    `);
 
     res.json(rows);
   } catch (err) {
     console.error(err);
 
-    res.status(500).json({
+    const status =
+      err.message === "Unauthorized" ? 401 :
+      err.message === "Forbidden" ? 403 : 500;
+
+    res.status(status).json({
+      success: false,
       error: err.message,
     });
   }
@@ -2467,21 +2780,28 @@ app.get("/api/analytics/popular-jobs", async (req, res) => {
 
 app.get("/api/analytics/applications-timeline", async (req, res) => {
   try {
+    await requireAdmin(req);
+
     const [rows] = await promisePool.query(`
-            SELECT
-                DATE_FORMAT(applied_at, '%Y-%m-%d') as date,
-                COUNT(*) as count
-            FROM applications
-            GROUP BY date
-            ORDER BY date ASC
-            LIMIT 30
-        `);
+      SELECT
+        DATE_FORMAT(applied_at, '%Y-%m-%d') AS date,
+        COUNT(*) AS count
+      FROM applications
+      GROUP BY date
+      ORDER BY date ASC
+      LIMIT 30
+    `);
 
     res.json(rows);
   } catch (err) {
     console.error(err);
 
-    res.status(500).json({
+    const status =
+      err.message === "Unauthorized" ? 401 :
+      err.message === "Forbidden" ? 403 : 500;
+
+    res.status(status).json({
+      success: false,
       error: err.message,
     });
   }
@@ -2761,20 +3081,21 @@ notificationsModule.setSocketIO(io);
 // Multiple connections per user.
 const onlineUsers = new Map();
 
-// ============= SOCKET.IO JWT AUTHENTICATION =============
+// ============= SOCKET.IO COOKIE AUTHENTICATION =============
 
 io.use(async (socket, next) => {
   try {
-    const token = socket.handshake.auth?.token;
+    const cookies = cookie.parse(
+      socket.handshake.headers.cookie || "",
+    );
+
+    const token = cookies[AUTH_COOKIE_NAME];
 
     if (!token) {
-      return next(new Error("Authentication token required"));
+      return next(new Error("Authentication required"));
     }
 
-    const decoded = jwt.verify(
-      token,
-      process.env.JWT_SECRET || "jobportal_secret_key_2024",
-    );
+    const decoded = jwt.verify(token, getJwtSecret());
 
     const [users] = await promisePool.query(
       "SELECT id, name, email, role FROM users WHERE id = ?",
@@ -2790,8 +3111,7 @@ io.use(async (socket, next) => {
     next();
   } catch (error) {
     console.error("Socket authentication error:", error.message);
-
-    next(new Error("Invalid authentication token"));
+    next(new Error("Invalid authentication"));
   }
 });
 
@@ -3109,25 +3429,16 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
     passport.authenticate("google", {
       failureRedirect: "/login",
     }),
-    (req, res) => {
-      const token = generateToken(req.user.id);
+(req, res) => {
+  const token = generateToken(req.user.id);
 
-// Send only safe user information
-const safeUser = {
-    id: req.user.id,
-    name: req.user.name,
-    email: req.user.email,
-    role: req.user.role
-};
+  setAuthCookie(res, token);
 
-const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
+  const clientUrl =
+    process.env.CLIENT_URL || "http://localhost:5173";
 
-const redirectUrl = `${clientUrl}/auth-success?token=${token}&user=${encodeURIComponent(
-    JSON.stringify(safeUser)
-)}`;
-
-res.redirect(redirectUrl);
-    },
+  res.redirect(`${clientUrl}/auth-success`);
+},
   );
 
   console.log("🔑 Google OAuth: enabled");

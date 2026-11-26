@@ -16,13 +16,10 @@ const Chat = ({ user, otherUser, onClose, socket }) => {
     const typingResetRef = useRef(null);
 
     const getAuthHeaders = useCallback(() => {
-        const token = sessionStorage.getItem('token');
-
-        return {
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {})
-        };
-    }, []);
+    return {
+        'Content-Type': 'application/json'
+    };
+}, []);
 
     // ==========================================
     // NORMALIZE MESSAGE DATA
@@ -51,9 +48,10 @@ const Chat = ({ user, otherUser, onClose, socket }) => {
             const res = await fetch(
                 `${API_URL}/api/messages/${user.id}/${otherUser.id}`,
                 {
-                    method: 'GET',
-                    headers: getAuthHeaders()
-                }
+    method: 'GET',
+    credentials: 'include',
+    headers: getAuthHeaders()
+}
             );
 
             if (!res.ok) {

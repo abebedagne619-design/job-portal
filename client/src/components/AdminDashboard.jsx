@@ -22,100 +22,106 @@ const AdminDashboard = ({ user }) => {
     });
 
     // Fetch all dashboard data
-    const fetchData = useCallback(async () => {
-        try {
-            const token = sessionStorage.getItem('token');
+const fetchData = useCallback(async () => {
+    try {
 
-            if (!token) {
-                throw new Error('Authentication token not found. Please log in again.');
+        const [jobsRes, usersRes, appsRes, statsRes] =
+            await Promise.all([
+
+                fetch(`${API_URL}/api/jobs`, {
+                    credentials: 'include',
+                    cache: 'no-store'
+                }),
+
+                fetch(`${API_URL}/api/users`, {
+                    credentials: 'include',
+                    cache: 'no-store'
+                }),
+
+                fetch(`${API_URL}/api/applications`, {
+                    credentials: 'include',
+                    cache: 'no-store'
+                }),
+
+                fetch(`${API_URL}/api/stats`, {
+                    credentials: 'include',
+                    cache: 'no-store'
+                })
+
+            ]);
+
+        console.log('ADMIN API STATUS:', {
+            jobs: jobsRes.status,
+            users: usersRes.status,
+            applications: appsRes.status,
+            stats: statsRes.status
+        });
+
+        const responses = [
+            { name: 'Jobs', response: jobsRes },
+            { name: 'Users', response: usersRes },
+            { name: 'Applications', response: appsRes },
+            { name: 'Stats', response: statsRes }
+        ];
+
+        for (const item of responses) {
+
+            if (!item.response.ok) {
+
+                const errorText = await item.response.text();
+
+                throw new Error(
+                    `${item.name} API failed (${item.response.status}): ${errorText}`
+                );
+
             }
 
-            const authHeaders = {
-                'Authorization': `Bearer ${token}`
-            };
-
-            const [jobsRes, usersRes, appsRes, statsRes] =
-                await Promise.all([
-                    fetch('${API_URL}/api/jobs', {
-                        cache: 'no-store'
-                    }),
-                    fetch('${API_URL}/api/users', {
-                        headers: authHeaders,
-                        cache: 'no-store'
-                    }),
-                    fetch('${API_URL}/api/applications', {
-                        headers: authHeaders,
-                        cache: 'no-store'
-                    }),
-                    fetch('${API_URL}/api/stats', {
-                        cache: 'no-store'
-                    })
-                ]);
-
-            console.log('ADMIN API STATUS:', {
-                jobs: jobsRes.status,
-                users: usersRes.status,
-                applications: appsRes.status,
-                stats: statsRes.status
-            });
-
-            const responses = [
-                { name: 'Jobs', response: jobsRes },
-                { name: 'Users', response: usersRes },
-                { name: 'Applications', response: appsRes },
-                { name: 'Stats', response: statsRes }
-            ];
-
-            for (const item of responses) {
-                if (!item.response.ok) {
-                    const errorText = await item.response.text();
-                    throw new Error(
-                        `${item.name} API failed (${item.response.status}): ${errorText}`
-                    );
-                }
-            }
-
-            const [jobsData, usersData, appsData, statsData] =
-                await Promise.all([
-                    jobsRes.json(),
-                    usersRes.json(),
-                    appsRes.json(),
-                    statsRes.json()
-                ]);
-
-            const normalizedJobs = Array.isArray(jobsData)
-                ? jobsData
-                : Array.isArray(jobsData?.data)
-                    ? jobsData.data
-                    : [];
-
-            const normalizedUsers = Array.isArray(usersData)
-                ? usersData
-                : Array.isArray(usersData?.data)
-                    ? usersData.data
-                    : [];
-
-            const normalizedApplications = Array.isArray(appsData)
-                ? appsData
-                : Array.isArray(appsData?.data)
-                    ? appsData.data
-                    : [];
-
-            setJobs(normalizedJobs);
-            setUsers(normalizedUsers);
-            setApplications(normalizedApplications);
-            setStats(statsData?.data || statsData || {});
-
-            console.log(
-                'ADMIN APPLICATIONS LOADED:',
-                normalizedApplications.length,
-                normalizedApplications
-            );
-
-        } catch (err) {
-            console.error('Admin Dashboard fetch error:', err);
         }
-    }, []);
+
+        const [jobsData, usersData, appsData, statsData] =
+            await Promise.all([
+                jobsRes.json(),
+                usersRes.json(),
+                appsRes.json(),
+                statsRes.json()
+            ]);
+
+        const normalizedJobs = Array.isArray(jobsData)
+            ? jobsData
+            : Array.isArray(jobsData?.data)
+                ? jobsData.data
+                : [];
+
+        const normalizedUsers = Array.isArray(usersData)
+            ? usersData
+            : Array.isArray(usersData?.data)
+                ? usersData.data
+                : [];
+
+        const normalizedApplications = Array.isArray(appsData)
+            ? appsData
+            : Array.isArray(appsData?.data)
+                ? appsData.data
+                : [];
+
+        setJobs(normalizedJobs);
+        setUsers(normalizedUsers);
+        setApplications(normalizedApplications);
+        setStats(statsData?.data || statsData || {});
+
+        console.log(
+            'ADMIN APPLICATIONS LOADED:',
+            normalizedApplications.length,
+            normalizedApplications
+        );
+
+    } catch (err) {
+
+        console.error('Admin Dashboard fetch error:', err);
+
+    }
+
+}, []);
 
     useEffect(() => {
         fetchData();
@@ -129,17 +135,14 @@ const AdminDashboard = ({ user }) => {
         }
 
         try {
-            const token = sessionStorage.getItem('token');
-
-            const res = await fetch('${API_URL}/api/jobs', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify(newJob)
-            });
-
+            const res = await fetch(`${API_URL}/api/jobs`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+        'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(newJob)
+});
             if (!res.ok) {
                 const error = await res.json();
                 throw new Error(error.message || 'Failed to add job');
@@ -170,18 +173,13 @@ const AdminDashboard = ({ user }) => {
         if (!window.confirm(language === "am" ? "ይህን ሥራ ማጥፋት ይፈልጋሉ?" : "Delete this job?")) return;
 
         try {
-            const token = sessionStorage.getItem('token');
-
-            const res = await fetch(
-                `${API_URL}/api/jobs/${id}`,
-                {
-                    method: 'DELETE',
-                    headers: {
-                        'Authorization': `Bearer ${token}`
-                    }
-                }
-            );
-
+         const res = await fetch(
+    `${API_URL}/api/jobs/${id}`,
+    {
+        method: 'DELETE',
+        credentials: 'include'
+    }
+);
             if (!res.ok) {
                 throw new Error(language === "am" ? "ሥራውን ማጥፋት አልተቻለም።" : "Failed to delete job");
             }
@@ -197,19 +195,17 @@ const AdminDashboard = ({ user }) => {
     // Update application status
     const updateApplicationStatus = async (id, status) => {
         try {
-            const token = sessionStorage.getItem('token');
-
-            const res = await fetch(
-                `${API_URL}/api/applications/${id}/status`,
-                {
-                    method: 'PUT',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${token}`
-                    },
-                    body: JSON.stringify({ status })
-                }
-            );
+          const res = await fetch(
+    `${API_URL}/api/applications/${id}/status`,
+    {
+        method: 'PUT',
+        credentials: 'include',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ status })
+    }
+);
 
             if (!res.ok) {
                 const error = await res.json();
@@ -230,17 +226,13 @@ const AdminDashboard = ({ user }) => {
         if (!window.confirm(language === "am" ? "ይህን የሥራ ማመልከቻ ማጥፋት ይፈልጋሉ?" : "Delete this application?")) return;
 
         try {
-            const token = sessionStorage.getItem('token');
-
-            const res = await fetch(
-                `${API_URL}/api/applications/${id}`,
-                {
-                    method: 'DELETE',
-                    headers: {
-                        'Authorization': `Bearer ${token}`
-                    }
-                }
-            );
+         const res = await fetch(
+    `${API_URL}/api/applications/${id}`,
+    {
+        method: 'DELETE',
+        credentials: 'include'
+    }
+);
 
             if (!res.ok) {
                 throw new Error(language === "am" ? "የሥራ ማመልከቻውን ማጥፋት አልተቻለም።" : "Failed to delete application");

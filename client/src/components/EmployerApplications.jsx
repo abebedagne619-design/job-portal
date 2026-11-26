@@ -14,63 +14,52 @@ const EmployerApplications = ({ user }) => {
     const [error, setError] = useState(null);
 
     // Fetch applications
-    useEffect(() => {
-        const fetchApplications = async () => {
-            try {
-                setLoading(true);
-                setError(null);
+useEffect(() => {
+    const fetchApplications = async () => {
+        try {
+            setLoading(true);
+            setError(null);
 
-                const token = sessionStorage.getItem('token');
-
-                if (!token) {
-                    throw new Error(
-                        isAm
-                            ? 'የLogin Token አልተገኘም።'
-                            : 'Authentication token not found.'
-                    );
+            const res = await fetch(
+                user.role === 'admin'
+                    ? `${API_URL}/api/applications`
+                    : `${API_URL}/api/applications/employer/${user.id}`,
+                {
+                    method: 'GET',
+                    credentials: 'include',
+                    cache: 'no-store'
                 }
+            );
 
-                const res = await fetch(
-                    user.role === 'admin'
-    ? `${API_URL}/api/applications`
-    : `${API_URL}/api/applications/employer/${user.id}`,
-                    {
-                        headers: {
-                            Authorization: `Bearer ${token}`
-                        }
-                    }
+            const data = await res.json();
+
+            if (!res.ok) {
+                throw new Error(
+                    data.message ||
+                    data.error ||
+                    'Failed to fetch applications'
                 );
-
-                const data = await res.json();
-
-                if (!res.ok) {
-                    throw new Error(
-                        data.message ||
-                        data.error ||
-                        'Failed to fetch applications'
-                    );
-                }
-
-                if (!Array.isArray(data)) {
-                    throw new Error('Invalid applications response');
-                }
-
-                setApplications(data);
-
-            } catch (err) {
-                setError(err.message);
-                console.error('Fetch error:', err);
-
-            } finally {
-                setLoading(false);
             }
-        };
 
-        if (user?.id) {
-            fetchApplications();
+            if (!Array.isArray(data)) {
+                throw new Error('Invalid applications response');
+            }
+
+            setApplications(data);
+
+        } catch (err) {
+            setError(err.message);
+            console.error('Fetch error:', err);
+
+        } finally {
+            setLoading(false);
         }
-    }, [user?.id, user?.role, isAm]);
+    };
 
+    if (user?.id) {
+        fetchApplications();
+    }
+}, [user?.id, user?.role, isAm]);
     // Schedule interview
     const handleScheduleClick = (app) => {
         if (user?.role !== 'employer') {
